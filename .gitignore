@@ -1,0 +1,17 @@
+# what a session at the robot writes: logs and the taught places belong to the rig, not to the code
+assembly_logs/
+brickloop_logs/
+spots.json
+plate*.json
+
+# local-only material
+notes/
+.venv*/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.DS_Store
+*.egg-info/
+build/
+dist/

@@ -1,0 +1,33 @@
+[project]
+name = "assembly-loop"
+version = "0.1.0"
+description = "Hold-to-run assembly on a UFACTORY xArm 7: a local dashboard, a guard that every motion goes through, and tasks over spots taught by hand (move a block, build a tower)"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{name = "Carlo Schreiber"}]
+dependencies = ["numpy>=1.21"]
+
+[project.optional-dependencies]
+real = ["xarm-python-sdk>=1.13"]  # the arm's SDK; the lab laptop's teleoperation environment already has it
+dev = ["pytest>=8", "ruff>=0.5"]
+
+[project.scripts]
+assembly-loop = "assemblyloop.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["assemblyloop*"]
+
+[tool.ruff]
+line-length = 140
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E501", "B006", "B008", "B905", "UP007", "UP045"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
