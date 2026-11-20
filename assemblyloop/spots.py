@@ -148,7 +148,7 @@ def plan_move(spots, src, dst, here, P, rehearse=False, src_up=0.0, dst_up=0.0):
     gs, gd = spots.grasp(src) + float(src_up) * up, spots.grasp(dst) + float(dst_up) * up
     hs, hd = spots.above(gs), spots.above(gd)
     ns, nd = (src if not src_up else f"{src}, {src_up:.0f} mm up"), (dst if not dst_up else f"{dst}, {dst_up:.0f} mm up")
-    S = [dict(name="go to the travel height", kind="move", to=spots.above(here), speed=P.slow),
+    S = [dict(name="go to the travel height", kind="move", to=spots.above(here), speed=P.lift),
          dict(name=f"go above {src}", kind="move", to=hs, speed=P.travel),
          dict(name=f"turn the gripper as at {src}", kind="turn", rpy=spots.turn(src)),
          dict(name="open the gripper", kind="grip", counts=P.open_counts)]
@@ -158,7 +158,7 @@ def plan_move(spots, src, dst, here, P, rehearse=False, src_up=0.0, dst_up=0.0):
               dict(name="close on it", kind="grip", counts=P.shut_counts, must_hold=True),
               dict(name="read the grasp", kind="read"),
               dict(name="lift it, slowly at first", kind="move", to=first, speed=P.press, stall_mm=P.pull_stall_mm, let_go_if_blocked=True),
-              dict(name="lift to the travel height", kind="move", to=hs, speed=P.slow)]
+              dict(name="lift to the travel height", kind="move", to=hs, speed=P.lift)]
     else:
         S += [dict(name="close the gripper (in the air)", kind="grip", counts=P.shut_counts)]
     S += [dict(name=f"go above {dst}", kind="move", to=hd, speed=P.travel),
@@ -167,7 +167,7 @@ def plan_move(spots, src, dst, here, P, rehearse=False, src_up=0.0, dst_up=0.0):
         S += [dict(name=f"lower it onto {nd}", kind="move", to=gd, speed=P.slow, stall_mm=P.stall_mm, rest_ok_mm=P.rest_ok_mm),
               dict(name="read the put-down", kind="read"),
               dict(name="let go", kind="grip", counts=P.open_counts),
-              dict(name="lift clear", kind="move", to=hd, speed=P.slow)]
+              dict(name="lift clear", kind="move", to=hd, speed=P.lift)]
     else:
         S += [dict(name="open the gripper (in the air)", kind="grip", counts=P.open_counts)]
     return S

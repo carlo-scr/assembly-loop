@@ -1,0 +1,112 @@
+"""The camera and the blocks, on pictures drawn by a made-up camera whose truth is known."""
+import cv2
+import numpy as np
+import pytest
+
+from assemblyloop.blocks import Catalogue, Kind, Seen, plan_tower
+from assemblyloop.eyes import PAINT, Camera, Table, calibrate, draw, find_blobs, look, outline, solid
+from assemblyloop.guard import Refused
+
+CAT = Catalogue([Kind("green bar", "box", (75.0, 25.0, 25.0), "green"), Kind("yellow cylinder", "cylinder", (25.0, 75.0), "yellow"),
+                 Kind("blue slab", "box", (60.0, 40.0, 15.0), "blue"), Kind("yellow cube", "box", (30.0, 30.0, 30.0), "yellow")]).check()
+TABLE = Table(np.eye(3), 100.0)  # a level table 100 mm up
+
+
+def camera(size=(1920, 1080)):
+    """A camera 1.1 m from the middle of the mat, looking down at it at a slant, with a lens that bends."""
+    eye, at = np.array([-250.0, 1250.0, 950.0]), np.array([0.0, 450.0, 100.0])
+    z = (at - eye) / np.linalg.norm(at - eye)
+    x = np.cross(z, [0.0, 0.0, 1.0])
+    x /= np.linalg.norm(x)
+    R = np.stack([x, np.cross(z, x), z])
+    return Camera(size, 0.62 * size[0], (-0.21, 0.05), cv2.Rodrigues(R)[0].ravel(), -R @ eye)
+
+
+def picture(cam, blocks):
+    im = np.full((cam.size[1], cam.size[0], 3), (110, 100, 95), np.uint8)
+    for kind, rest, u, v, a in blocks:
+        hull = outline(cam, solid(CAT.kind(kind).rests()[rest], TABLE, u, v, a, CAT.kind(kind).shape))
+        cv2.fillConvexPoly(im, np.round(hull * 16).astype(np.int32), PAINT[CAT.kind(kind).colour], shift=4)
+    return im
+
+
+def test_the_table_frame_is_right_handed_and_up_is_up():
+    assert np.allclose(np.cross(TABLE.axes[:, 0], TABLE.axes[:, 1]), TABLE.axes[:, 2]) and np.allclose(TABLE.axes[:, 2], [0, 0, 1])
+    assert np.allclose(TABLE.coords(TABLE.point(3.0, 4.0, 5.0)), [3.0, 4.0, 5.0])
+
+
+def test_a_camera_is_fitted_to_places_on_one_plane_and_then_knows_other_heights():
+    true, rng = camera(), np.random.default_rng(1)
+    uv = [(u, v) for u in (-150.0, -50.0, 50.0, 150.0) for v in (330.0, 430.0, 530.0, 630.0)]
+    xyz = np.array([TABLE.point(u, v, 112.5) for u, v in uv])
+    cam = calibrate(true.project(xyz) + rng.normal(0.0, 0.4, (len(xyz), 2)), xyz, true.size)
+    assert cam.rms < 1.0
+    for w in (100.0, 137.5, 175.0):  # the table itself, and the tops of things up to 75 mm high
+        probe = np.array([TABLE.point(u, v, w) for u, v in ((-120.0, 350.0), (0.0, 480.0), (130.0, 600.0))])
+        back = cam.on_plane(true.project(probe), TABLE.axes[:, 2], w)
+        assert np.abs(back - probe).max() < 2.5, (w, np.abs(back - probe).max())
+    again = Camera.from_dict(cam.to_dict())
+    assert np.allclose(again.project(xyz), cam.project(xyz))
+    assert np.allclose(cam.scaled((3840, 2160)).project(xyz), 2.0 * cam.project(xyz), atol=1e-6)
+
+
+def test_too_few_places_or_places_on_a_line_are_refused():
+    true = camera()
+    line = np.array([TABLE.point(u, 400.0 + 0.01 * u, 112.5) for u in np.linspace(-150, 150, 10)])
+    with pytest.raises(Refused):
+        calibrate(true.project(line), line, true.size)
+    with pytest.raises(Refused):
+        calibrate(true.project(line[:5]), line[:5], true.size)
+
+
+def test_blocks_are_made_out_where_they_are_whatever_way_they_lie():
+    cam = camera()
+    truth = [("green bar", 0, -120.0, 380.0, 20.0), ("green bar", 1, 60.0, 420.0, 0.0), ("yellow cylinder", 0, -20.0, 560.0, 0.0),
+             ("blue slab", 0, 120.0, 580.0, 130.0), ("yellow cube", 0, -140.0, 600.0, 40.0), ("yellow cylinder", 1, 140.0, 360.0, 75.0)]
+    seen, unknown, blobs = look(picture(cam, truth), cam, TABLE, CAT)
+    assert len(blobs) == len(truth) and not unknown
+    for kind, rest, u, v, a in truth:
+        want = CAT.kind(kind).rests()[rest]
+        s = min(seen, key=lambda s: np.hypot(s.uv[0] - u, s.uv[1] - v))
+        assert np.hypot(s.uv[0] - u, s.uv[1] - v) < 1.5 and s.score > 0.93, (kind, s)
+        assert abs(s.rest.height - want.height) < 0.5 and s.rest.round == want.round, (kind, want.name, s.kind.name, s.rest.name)
+        if want.turns:
+            d = abs(s.angle - a % want.turns) % want.turns
+            assert min(d, want.turns - d) < 3.0, (kind, s.angle, a)
+    assert sorted(s.name for s in seen if s.kind.name == "green bar") == ["green bar 1", "green bar 2"]
+    assert draw(picture(cam, truth), blobs, seen, unknown, cam, TABLE).shape[1] == 1280
+
+
+def test_what_is_not_in_the_catalogue_or_cut_off_is_said_so_and_never_guessed():
+    cam = camera()
+    im = picture(cam, [("green bar", 0, 0.0, 450.0, 0.0)])
+    cv2.circle(im, (300, 300), 40, PAINT["purple"], -1)  # nothing purple is in the catalogue
+    cv2.rectangle(im, (0, 600), (30, 700), PAINT["blue"], -1)  # at the edge of the picture
+    big = outline(cam, solid(CAT.kind("blue slab").rests()[0], TABLE, 150.0, 600.0, 0.0, "box")) * [1.6, 1.6] - [500, 250]
+    cv2.fillConvexPoly(im, np.round(big).astype(np.int32), PAINT["blue"])  # blue, but far too large for a slab
+    seen, unknown, _ = look(im, cam, TABLE, CAT)
+    assert [s.kind.name for s in seen] == ["green bar"]
+    whys = " | ".join(w for _, w in unknown)
+    assert len(unknown) == 3 and "no purple block" in whys and "cut off" in whys and "fits only" in whys
+    region = np.zeros(im.shape[:2], bool)
+    region[:, 700:] = True
+    assert all(b.x0 >= 700 for b in find_blobs(im, region))
+
+
+def test_the_tower_is_widest_first_and_says_what_it_leaves_out():
+    k = CAT.kind
+    seen = [Seen(k("green bar"), k("green bar").rests()[0], (0.0, 0.0), name="bar"), Seen(k("blue slab"), k("blue slab").rests()[0], (50.0, 0.0), name="slab"),
+            Seen(k("yellow cylinder"), k("yellow cylinder").rests()[0], (100.0, 0.0), name="cyl up"), Seen(k("yellow cylinder"), k("yellow cylinder").rests()[1], (150.0, 0.0), name="cyl lying"),
+            Seen(k("yellow cube"), k("yellow cube").rests()[0], (200.0, 0.0), name="cube")]
+    levels, out = plan_tower(seen, CAT)
+    assert [lv["block"].name for lv in levels] == ["slab", "cube", "bar", "cyl up"]
+    assert [lv["base_mm"] for lv in levels] == [0.0, 15.0, 45.0, 70.0] and levels[-1]["top_mm"] == 145.0
+    assert [lv["hold_mm"] for lv in levels] == [0.0, 0.0, 0.0, 35.0]  # the tall cylinder is taken near its top
+    assert [(s.name, "roll" in why) for s, why in out] == [("cyl lying", True)]
+    levels, out = plan_tower(seen, CAT, max_mm=60.0)
+    assert [lv["block"].name for lv in levels] == ["slab", "cube"] and len(out) == 3
+    wide = Catalogue([Kind("plank", "box", (120.0, 90.0, 10.0))]).check()
+    assert plan_tower([Seen(wide.kinds[0], wide.kinds[0].rests()[0], (0.0, 0.0))], wide)[0] == []
+    with pytest.raises(Refused):
+        Catalogue([Kind("x", "box", (10.0, 10.0))]).check()
+    assert Catalogue.from_dict(CAT.to_dict()).kinds == CAT.kinds

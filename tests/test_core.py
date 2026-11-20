@@ -1,6 +1,7 @@
 """The assembly loop's safety rules (assemblyloop/), checked on the stand-in arm in simulated time. Nothing here needs the
 robot or its SDK."""
 import json
+import socket
 import sys
 
 import numpy as np
@@ -8,7 +9,7 @@ import pytest
 
 from assemblyloop.arms import ArmFault, FakeArm, flange_mm, matrix_rpy, rpy_matrix, twist_deg
 from assemblyloop.cycle import NothingHeld, Params, execute, plan
-from assemblyloop.deadman import Deadman, ManualDeadman, QuestDeadman
+from assemblyloop.deadman import Deadman, ManualDeadman, QuestDeadman, discovery_reply
 from assemblyloop.guard import Blocked, Guard, Refused, Released
 from assemblyloop.plate import Plate, demo
 
@@ -85,6 +86,27 @@ def test_quest_frames_grip_hand_sequence_and_rubbish():
     assert QuestDeadman(hand="either", clock=c).on_packet(frame(1, left=1.0))
 
 
+def test_the_headsets_search_is_answered_and_is_never_taken_for_a_grip():
+    r = json.loads(discovery_reply(b"DCOL-DISCOVER/1 abc\n", 6666, "pc (assembly-loop)"))
+    assert (r["proto"], r["type"], r["teleop_port"], r["nonce"], r["name"]) == (1, "dcol-collector", 6666, "abc", "pc (assembly-loop)")
+    assert json.loads(discovery_reply(b"DCOL-DISCOVER/1", 6666, "pc"))["nonce"] == ""
+    for other in (b"DCOL-DISCOVER/11 abc", b"DCOL-DISCOVER/2", b'{"seq": 1, "right": {"grip": 1.0}}', b"", b"DCOL-DISCOVER/1 " + b"x" * 600):
+        assert discovery_reply(other, 6666, "pc") is None
+    q = QuestDeadman(port=0, host="127.0.0.1").start()
+    port = q._sock.getsockname()[1]
+    try:
+        assert "open the connect screen" in q.why()
+        quest = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        quest.settimeout(2.0)
+        quest.sendto(b"DCOL-DISCOVER/1 n7", ("127.0.0.1", port))
+        r = json.loads(quest.recvfrom(4096)[0])
+        assert r["nonce"] == "n7" and r["name"] == q.name and r["busy"] is False
+        assert q.n == 0 and q.searches == 1 and q.why().startswith("no signal") and q.name in q.why()
+        quest.close()
+    finally:
+        q.stop()
+
+
 # ------------------------------------------------------------------------------------------------ the guard
 def test_a_target_outside_the_volume_or_too_fast_is_refused_before_anything_is_sent():
     plate, arm, dm, g, _ = rig()
@@ -94,7 +116,7 @@ def test_a_target_outside_the_volume_or_too_fast_is_refused_before_anything_is_s
     with pytest.raises(Refused):
         g.move_to(plate.hover("C3") + 300.0 * plate.f(), 30.0, "off the plate")
     with pytest.raises(Refused):
-        g.move_to(plate.hover("E3"), 61.0, "too fast")
+        g.move_to(plate.hover("E3"), 121.0, "too fast")
     assert moves(arm) == []
     with pytest.raises(Refused):
         plate.hover("H8")  # a cell outside the taught area
@@ -232,7 +254,7 @@ def test_a_cycle_stays_inside_its_limits_and_puts_the_brick_where_the_aim_says()
         assert out["blocked"] is None and set(out["reads"]) == {"read the grasp", "read the carry", "read the seat"}
         mv = moves(arm)
         assert max(np.linalg.norm(e[2]) for e in mv) <= g.lim.max_step_mm + 1e-6
-        assert max(e[3] for e in mv) <= 60.0
+        assert max(e[3] for e in mv) <= P.travel == 100.0
         assert all(g.lim.why_outside(e[4]) == "" for e in mv)
         off = arm.bricks["b"] - plate.grasp("E3")
         assert abs(np.linalg.norm(off - (off @ plate.n) * plate.n) - want) < 0.05
@@ -308,7 +330,7 @@ def test_plans_refuse_what_they_should():
     with pytest.raises(Refused):
         plan(plate, "C3", "E3", offset_mm=16.0)
     with pytest.raises(Refused):
-        plan(plate, "C3", "E3", P=Params(travel=80.0))
+        plan(plate, "C3", "E3", P=Params(travel=130.0))
     with pytest.raises(Refused):
         plan(plate, "C3", "E3", P=Params(overtravel_mm=3.0))
     bad = demo()

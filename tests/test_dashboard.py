@@ -112,7 +112,7 @@ def test_the_ladder_off_disarmed_calibration_armed_running(ses):
     assert until(lambda: ses.worker is None)
     assert np.allclose(ses.arm.p, z0 - [0, 0, 20.0], atol=1e-6)
     with pytest.raises(Refused):
-        ses.jog("down", 60)  # never more than 25 mm at once
+        ses.jog("down", 61)  # never more than 60 mm at once
     nudge("down", 20, 4)  # 100 mm down: around the block
     ses.arm.blocked = lambda p: p[2] < 195.0  # the table
     nudge("down", 20)
@@ -506,3 +506,68 @@ def test_a_block_that_meets_the_tower_early_is_let_go_there_but_a_far_obstacle_e
     assert a.holding is not None and a.holding[0] == "B"  # lifted clear with the block still in the gripper
     with pytest.raises(Refused, match="how many"):
         ses.tower("T", h, "build", n_now=ses.stack["n"])
+
+
+def test_the_gripper_is_pointed_down_in_small_watched_pieces_before_any_spot(ses):
+    ses.start("stand-in")
+    a = ses.arm
+    a.rpy = np.array([117.72, -41.15, 70.75])  # how the lab's teleoperation leaves the gripper
+    tilt = lambda: float(np.degrees(np.arccos(-rpy_matrix(a.rpy)[2, 2])))  # noqa: E731
+    was = tilt()
+    assert 65.0 < was < 75.0
+    ses.grip.letgo()
+    assert until(lambda: all(c["ok"] for c in ses.state()["checks"]))
+    with pytest.raises(Refused, match="arm first"):
+        ses.level()
+    ses.arm_on()
+    place, heading = a.p.copy(), rpy_matrix(a.rpy)
+    ses.level()  # nothing moves while the grip is released
+    time.sleep(0.2)
+    assert not [e for e in a.log if e[0] == "tilt"] and ses.worker is not None
+    ses.grip.hold()
+    assert until(lambda: ses.worker is None, 30), ses.state()["calibration"]
+    pieces = [e for e in a.log if e[0] == "tilt"]
+    assert tilt() < 0.3 and "points straight down now" in ses.note and len(pieces) == 14, (tilt(), ses.note, len(pieces))  # about 70 degrees, 5 at a time
+    assert np.allclose(a.p, place) and not [e for e in a.log if e[0] == "move"]  # the flange stayed where it was
+    assert twist_deg(heading, rpy_matrix(a.rpy))[1] == pytest.approx(was, abs=0.5)  # the shortest way down, no spin on top
+    assert np.allclose(ses.guard.lim.axes[:, 2], [0.0, 0.0, 1.0], atol=1e-3)  # "up" for the nudges is straight up now
+    ses.level()
+    assert until(lambda: ses.worker is None, 10) and "already points straight down" in ses.note
+    Session.save_spot(ses, "A")
+    with pytest.raises(Refused, match="remove the saved spots"):
+        ses.level()
+
+
+def test_an_arm_that_re_poses_itself_while_tilting_is_stopped_at_once(ses):
+    ses.start("stand-in")
+    a = ses.arm
+    a.rpy, a.swing_deg = np.array([150.0, 0.0, 0.0]), 40.0  # a joint jumps 40 degrees during a 5 degree tilt
+    ses.grip.letgo()
+    assert until(lambda: all(c["ok"] for c in ses.state()["checks"]))
+    ses.arm_on()
+    ses.grip.hold()
+    ses.level()
+    assert until(lambda: ses.phase() == "STOPPED", 10), ses.phase()
+    assert "re-posing itself" in ses.ended and len([e for e in a.log if e[0] == "tilt"]) == 1 and a.stopped
+
+
+def test_straight_down_follows_how_the_arm_is_mounted(ses):
+    from assemblyloop.session import default_arms, mount_down
+
+    arms = default_arms()
+    assert np.allclose(arms["right"]["down"], [0.0, -0.7071, -0.7071], atol=1e-4) and np.allclose(arms["left"]["down"], [0.0, 0.7071, -0.7071], atol=1e-4)
+    assert np.allclose(mount_down("right", 0.0), [0.0, 0.0, -1.0]) and "down" not in arms["stand-in"]
+    ses.arms["stand-in"]["down"] = mount_down("right")  # the stand-in arm, mounted like the rig's right arm
+    ses.start("stand-in")
+    a = ses.arm
+    a.rpy = np.array([180.0, 0.0, 14.5])  # pointing along the base's own -z: 45 degrees off for this mount
+    ses.grip.letgo()
+    assert until(lambda: all(c["ok"] for c in ses.state()["checks"]))
+    ses.arm_on()
+    assert until(lambda: ses.state()["arm"].get("tilt_deg") == pytest.approx(45.0, abs=0.1)), ses.state()["arm"]
+    ses.grip.hold()
+    ses.level()
+    assert until(lambda: ses.worker is None, 30) and "it was tilted 45 deg" in ses.note, ses.note
+    assert np.allclose(tool_axis(a.rpy), mount_down("right"), atol=2e-3)
+    assert until(lambda: ses.state()["arm"].get("tilt_deg") == pytest.approx(0.0, abs=0.2))
+    assert np.allclose(ses.guard.lim.axes[:, 2], -mount_down("right"), atol=2e-3) and np.allclose(ses.guard.lim.axes[:, 0], [1.0, 0.0, 0.0], atol=2e-3)  # up is up, forward is still forward

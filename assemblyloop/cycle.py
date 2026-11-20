@@ -22,8 +22,9 @@ class NothingHeld(RuntimeError):
 
 @dataclass
 class Params:
-    travel: float = 60.0
-    slow: float = 30.0
+    travel: float = 100.0  # across, at the travel height, with nothing near
+    lift: float = 60.0  # straight up to the travel height, and nudging upwards
+    slow: float = 30.0  # coming down, and every nudge that is watched for contact
     press: float = 15.0
     engage_mm: float = 18.0  # the last stretch above seated is done at press speed
     overtravel_mm: float = 1.0  # how far past the taught grasp height the press may be planned (the lab uses 2, at most 3)
@@ -40,8 +41,8 @@ class Params:
     rest_ok_mm: float = 6.0  # a put-down that meets something this close to its target counts as put down
 
     def check(self):
-        if not (0 < self.press <= self.slow <= self.travel <= 60.0):
-            raise Refused("speeds must satisfy 0 < press <= slow <= travel <= 60 mm/s")
+        if not (0 < self.press <= self.slow <= self.lift <= self.travel <= 120.0):
+            raise Refused("speeds must satisfy 0 < press <= slow <= lift <= travel <= 120 mm/s")
         if not (0.0 <= self.overtravel_mm <= 2.0):
             raise Refused("overtravel must be between 0 and 2 mm")
         if self.shake_mm > 3.0:

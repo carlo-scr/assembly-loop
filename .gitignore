@@ -2,6 +2,9 @@
 assembly_logs/
 brickloop_logs/
 spots.json
+camera.json
+blocks.json
+look.jpg
 plate*.json
 
 # local-only material

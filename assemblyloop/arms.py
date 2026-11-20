@@ -8,6 +8,9 @@ What the real arm is asked to do, and nothing else:
   - turn the gripper about its own axis by moving the LAST JOINT ONLY, every other joint held where it is. That is how
     the lab turns it: asking the controller for a new orientation instead makes it re-solve all seven joints, and the
     whole arm swings.
+  - ONCE, before any place is taught, and only when asked on the page: tilt the gripper until it points straight
+    down, the flange staying where it is (`pose_abs`, a few degrees at a time). This is the one move in which the
+    controller solves all joints anew, so the guard watches every joint while it runs (`Guard.level`).
   - pause, resume and stop such a move
   - open the gripper, or close it fully and let it stall on the brick (the lab's way of gripping)
 It never streams targets (servo mode), never clears a controller error, never changes a controller setting (payload,
@@ -103,6 +106,7 @@ class FakeArm:
         self.log, self.t, self.fault_when, self.blocked = [], 0.0, None, None  # blocked(p) -> True where the arm cannot go
         self.j7, self.j7_real, self.turn_target, self.turn_speed = 0.0, 0.0, None, 0.0  # the last joint: planned, measured, where it is going
         self.turn_sign, self.turn_stuck = 1.0, False  # which way the gripper spins for +joint 7; a gripper that is held and cannot turn
+        self.tilt, self.swing_deg = None, 0.0  # a tilt under way: [wanted rpy, seconds left]; how far a joint jumps during one (to try the guard)
 
     # --- simulated time
     def advance(self, dt):
@@ -110,7 +114,11 @@ class FakeArm:
         if self.fault_when is not None and not self.err:
             self.err = int(self.fault_when(self) or 0)
         if self.err:
-            self.target = self.turn_target = None
+            self.target = self.turn_target = self.tilt = None
+        if self.tilt is not None and not self.paused and not self.stopped:
+            self.tilt[1] -= dt
+            if self.tilt[1] <= 0.0:
+                self.rpy, self.tilt = np.array(self.tilt[0], float), None
         if self.turn_target is not None and not self.paused and not self.stopped:
             step = float(np.clip(self.turn_target - self.j7, -self.turn_speed * dt, self.turn_speed * dt))
             self.j7 += step
@@ -174,8 +182,9 @@ class FakeArm:
     def move_rel(self, d, speed, acc):
         if not self.enabled or self.stopped:
             raise ArmFault("a move was sent to an arm that is not enabled")
-        self.target, self.speed = self.plan + np.asarray(d, float), float(speed)
-        self.log.append(("move", self.t, tuple(float(v) for v in d), float(speed), self.target.copy()))
+        target = self.plan + np.asarray(d, float)  # kept here: the clock's thread may have arrived (and cleared `target`) before the next line
+        self.target, self.speed = target, float(speed)
+        self.log.append(("move", self.t, tuple(float(v) for v in d), float(speed), target.copy()))
 
     def turn_rel(self, deg, speed, acc):
         if not self.enabled or self.stopped:
@@ -183,8 +192,20 @@ class FakeArm:
         self.turn_target, self.turn_speed = self.j7 + float(deg), float(speed)
         self.log.append(("turn", self.t, float(deg), float(speed)))
 
+    def pose_abs(self, xyz, rpy, speed, acc):
+        if not self.enabled or self.stopped:
+            raise ArmFault("a move was sent to an arm that is not enabled")
+        self.tilt = [np.array(rpy, float), twist_deg(rpy_matrix(self.rpy), rpy_matrix(rpy))[1] / float(speed)]
+        self.log.append(("tilt", self.t, tuple(float(v) for v in rpy), float(speed)))
+
+    def rpy_now(self):
+        return self.rpy.copy()
+
+    def joints_now(self):
+        return [self.swing_deg if self.tilt is not None else 0.0] * 6 + [self.j7]
+
     def moving_now(self):
-        return (self.target is not None or self.turn_target is not None) and not self.paused and not self.stopped
+        return (self.target is not None or self.turn_target is not None or self.tilt is not None) and not self.paused and not self.stopped
 
     def pause(self):
         self.paused = True
@@ -195,7 +216,7 @@ class FakeArm:
         self.log.append(("resume", self.t))
 
     def stop(self):
-        self.stopped, self.target, self.turn_target = True, None, None
+        self.stopped, self.target, self.turn_target, self.tilt = True, None, None, None
         self.log.append(("stop", self.t))
 
     def grip(self, counts):
@@ -305,6 +326,12 @@ class XArm:
     def j7_now(self):
         return float(self.api.angles[6])
 
+    def joints_now(self):
+        return [float(v) for v in self.api.angles[:7]]
+
+    def rpy_now(self):
+        return np.array(self.api.position[3:6], float)
+
     # --- commands
     def turn_rel(self, deg, speed, acc):
         """Spin the gripper by moving joint 7 only: all seven planned angles are read and sent back with the last one
@@ -312,6 +339,11 @@ class XArm:
         here = self.joints(False)
         here[6] += float(deg)
         self._ok(self.api.set_servo_angle(angle=here, speed=float(speed), mvacc=float(acc), wait=False, is_radian=False), "set_servo_angle")
+
+    def pose_abs(self, xyz, rpy, speed, acc):
+        """Go to a pose given in full: the same place, the gripper tilted as in `rpy`. Only `Guard.level` asks for this."""
+        self._ok(self.api.set_position(x=float(xyz[0]), y=float(xyz[1]), z=float(xyz[2]), roll=float(rpy[0]), pitch=float(rpy[1]), yaw=float(rpy[2]), relative=False,
+                                       speed=float(speed), mvacc=float(acc), wait=False, is_radian=False), "set_position")
 
     def move_rel(self, d, speed, acc):
         self._ok(self.api.set_position(x=float(d[0]), y=float(d[1]), z=float(d[2]), roll=0.0, pitch=0.0, yaw=0.0, relative=True,

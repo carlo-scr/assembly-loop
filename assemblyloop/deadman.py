@@ -14,6 +14,23 @@ import json
 import socket
 import threading
 import time
+import uuid
+
+DISCOVER = b"DCOL-DISCOVER/1"  # the lab's headset app looks for a server with this before it sends any frame
+
+
+def discovery_reply(data, port, name, busy=False):
+    """The answer to the headset's search, or None if `data` is not one. The app broadcasts
+    b"DCOL-DISCOVER/1 <nonce>" to the port it streams to, lists whoever answers, and sends its frames to the address
+    the chosen answer came from (the wire format is in the lab's retriever-data-collection, docs/discovery.md)."""
+    if len(data) > 512 or not data.startswith(DISCOVER) or data[len(DISCOVER):len(DISCOVER) + 1] not in (b"", b" ", b"\n", b"\r"):
+        return None
+    try:
+        nonce = data[len(DISCOVER):].strip().decode("ascii")[:64]
+    except UnicodeDecodeError:
+        return None
+    return json.dumps(dict(proto=1, type="dcol-collector", name=name, id=uuid.uuid5(uuid.NAMESPACE_DNS, name).hex, teleop_port=int(port),
+                           dashboard_port=0, busy=bool(busy), session_running=True, mode="assembly", nonce=nonce), separators=(",", ":")).encode()
 
 
 class Deadman:
@@ -81,6 +98,15 @@ class QuestDeadman(Deadman):
         self.port, self.host, self.hand, self.threshold = int(port), host, hand, float(threshold)
         self._seq, self._sock, self._thread, self._run = None, None, None, False
         self.last_grip = None
+        self.name, self.searches = f"{socket.gethostname() or 'lab-pc'} (assembly-loop)", 0  # as listed in the headset; searches answered
+
+    def why(self):
+        w = super().why()
+        if w != "no signal has arrived yet":
+            return w
+        if self.searches:
+            return f'{w}: the headset is searching, choose "{self.name}" in its server list'
+        return f"{w}: open the connect screen of the headset app, on the same network as this computer"
 
     def on_packet(self, data, t=None):
         """Take one datagram. Returns True if it counted as a fresh signal."""
@@ -120,12 +146,20 @@ class QuestDeadman(Deadman):
     def _loop(self):
         while self._run:
             try:
-                data, _ = self._sock.recvfrom(65535)
+                data, addr = self._sock.recvfrom(65535)
             except (socket.timeout, TimeoutError):  # noqa: UP041  two different classes before Python 3.10, and the lab laptop's version is not known
                 continue
             except OSError:
                 break
-            self.on_packet(data)
+            reply = discovery_reply(data, self.port, self.name, busy=not super().why().startswith("no signal"))
+            if reply is None:
+                self.on_packet(data)
+                continue
+            self.searches += 1
+            try:
+                self._sock.sendto(reply, addr)
+            except OSError:
+                pass
 
     def stop(self):
         self._run = False

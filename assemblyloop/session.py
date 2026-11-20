@@ -30,6 +30,7 @@ from .arms import ArmFault, FakeArm, XArm, run_fake_clock
 from .cycle import NothingHeld, Params, execute
 from .deadman import Deadman, QuestDeadman
 from .guard import Blocked, Guard, Limits, Refused, Released
+from .sight import Sight
 from .spots import Spots, demo_spots, plan_move, tool_axis
 
 JOG = dict(up=(0, 0, 1), down=(0, 0, -1), fwd=(1, 0, 0), back=(-1, 0, 0), left=(0, 1, 0), right=(0, -1, 0))  # in (forward, left, up)
@@ -57,8 +58,17 @@ def answers(ip, port=502, timeout=0.3):
         return False
 
 
-def default_arms(right="192.168.1.199", left="192.168.1.219"):
-    return {"right": dict(label="Right arm", ip=right, make=lambda: XArm(right)), "left": dict(label="Left arm", ip=left, make=lambda: XArm(left)),
+def mount_down(side, deg=45.0):
+    """Straight down (towards the floor) in the base frame of an arm that is mounted like a shoulder: rolled `deg`
+    about its own forward (x) axis, the right arm one way and the left arm the other. On this rig both are at 45
+    degrees ("1:30" and "10:30"), which is what the lab's teleoperation uses: for the right arm, up is (0, 0.707, 0.707)."""
+    a = np.radians(float(deg))
+    return np.array([0.0, (-1.0 if side == "right" else 1.0) * np.sin(a), -np.cos(a)])
+
+
+def default_arms(right="192.168.1.199", left="192.168.1.219", mount_deg=45.0):
+    return {"right": dict(label="Right arm", ip=right, make=lambda: XArm(right), down=mount_down("right", mount_deg)),
+            "left": dict(label="Left arm", ip=left, make=lambda: XArm(left), down=mount_down("left", mount_deg)),
             "stand-in": dict(label="Stand-in arm (no robot)", ip=None, make=FakeArm)}
 
 
@@ -72,16 +82,18 @@ def jog_axes(rpy_deg):
     return np.stack([fwd, np.cross(up, fwd), up], 1)
 
 
-class Session:
+class Session(Sight):
     def __init__(self, arms=None, quest_port=6666, hand="right", spots_path="spots.json", log_dir="assembly_logs", probe=answers, say=None, fake_speed=1.0,
-                 guard_kw=None, limit_kw=None):
+                 guard_kw=None, limit_kw=None, camera=None, camera_path="camera.json", blocks_path="blocks.json"):
         self.arms, self.quest_port, self.hand, self.probe, self.fake_speed = arms or default_arms(), int(quest_port), hand, probe, float(fake_speed)
-        self.guard_kw, self.limit_kw = dict(guard_kw or {}), dict(limit_kw or {})  # timing overrides, for tests on the stand-in arm
+        # a move that should meet nothing goes in pieces of up to 80 mm (the guard's own default is 30) at up to 120 mm/s
+        self.guard_kw, self.limit_kw = dict(guard_kw or {}), {"max_step_mm": 80.0, "max_speed_mm_s": 120.0, **(limit_kw or {})}
         self.spots_path, self.log_root, self._say = Path(spots_path), Path(log_dir), say
         self.P, self.lock, self._next = Params(), threading.RLock(), threading.Event()
         self.lines = collections.deque(maxlen=120)
         self.reach, self._gen, self._quit = {}, 0, False
         self.ended = None
+        self._sight_init(camera, camera_path, blocks_path)
         self._reset()
         threading.Thread(target=self._probe_loop, daemon=True).start()
 
@@ -296,10 +308,13 @@ class Session:
         with self.lock:
             self._teach("nudging")
             mm = float(mm)
-            if direction not in JOG or not 0.5 <= mm <= 25.0:
-                raise Refused("a nudge is up, down, fwd, back, left or right, by 0.5 to 25 mm")
+            if direction not in JOG or not 0.5 <= mm <= 60.0:
+                raise Refused("a nudge is up, down, fwd, back, left or right, by 0.5 to 60 mm")
             d = self.guard.lim.axes @ (np.array(JOG[direction], float) * mm)
-            self._small(f"nudge {direction} {mm:g} mm", lambda g: g.move_to(g.where() + d, self.P.slow, f"nudge {direction}", stall_mm=self.P.stall_mm))
+            if direction == "up":  # away from everything: in one piece, not watched
+                self._small(f"nudge up {mm:g} mm", lambda g: g.move_to(g.where() + d, self.P.lift, "nudge up"))
+            else:
+                self._small(f"nudge {direction} {mm:g} mm", lambda g: g.move_to(g.where() + d, self.P.slow, f"nudge {direction}", stall_mm=self.P.stall_mm))
 
     def turn(self, direction, deg):
         """Spin the gripper about its own axis (only the last joint moves): "ccw" or "cw", 1 to 90 degrees."""
@@ -309,6 +324,76 @@ class Session:
             if direction not in ("ccw", "cw") or not 1.0 <= deg <= 90.0:
                 raise Refused("a turn is ccw or cw, by 1 to 90 degrees")
             self._small(f"turn {direction} {deg:g} deg", lambda g: g.turn_by(deg if direction == "ccw" else -deg, f"turn {direction}"))
+
+    def level(self):
+        """Tilt the gripper until it points straight down at the table, the flange staying where it is. Before any
+        spot is saved (all spots share one tilt). The fingertips swing sideways while it tilts: keep the space free."""
+        with self.lock:
+            self._teach("pointing the gripper down")
+            if self.draft is not None and self.draft.at:
+                raise Refused("remove the saved spots first: every spot is taught with the gripper tilted the same way")
+
+            def act(g):
+                deg = g.level(down=self.down())
+                g.lim = self._jog_limits()  # forward, left and up are counted from the gripper's new axis
+                return f"the gripper points straight down now (it was tilted {deg:.0f} deg)" if deg else "the gripper already points straight down"
+
+            self._small("point the gripper down", act)
+
+    def down(self):
+        """Straight down in the chosen arm's base frame (the arms of this rig are mounted at an angle)."""
+        return np.asarray(self.arms[self.chosen].get("down", (0.0, 0.0, -1.0)), float)
+
+    def find_table(self, wide_mm=200.0, deep_mm=140.0):
+        """Instead of teaching spots by hand. With a bar held in the jaws (lying as it would lie on the table, the
+        jaws across its short side) and the gripper pointing straight down over the middle of the area the blocks will
+        lie in: come down slowly until the bar meets the table, let go of it there, and make the spots from that:
+          T   where the bar was put down: the height at which blocks are taken, and where the tower will stand;
+          P, Q  two opposite corners of the area, `wide_mm` across (left to right) and `deep_mm` deep, around T.
+        The label then reads ARMED with the bar on T, ready for the camera to be shown the table."""
+        with self.lock:
+            self._teach("finding the table")
+            wide, deep = float(wide_mm), float(deep_mm)
+            if not (100.0 <= wide <= 400.0 and 100.0 <= deep <= 400.0):
+                raise Refused("the area is 100 to 400 mm each way")
+            if self.draft is not None and self.draft.at:
+                raise Refused("remove the saved spots first")
+            pose = self.arm.pose()
+            tilt = float(np.degrees(np.arccos(np.clip(tool_axis(pose[3:]) @ self.down(), -1.0, 1.0))))
+            if tilt > 1.5:
+                raise Refused(f"the gripper is tilted {tilt:.0f} deg from straight down: press 'Point the gripper down' first")
+            axes = jog_axes(pose[3:])
+
+            def act(g):
+                got = g.grip(self.P.shut_counts, "close on the bar")
+                if got < self.P.held_min_counts:
+                    g.grip(self.P.open_counts, "open again: nothing was held")
+                    raise Refused("nothing is between the jaws: hold a bar between them and press Close gripper first")
+                start = g.where()
+                g.lim = Limits(start.copy(), axes, np.array([-15.0, -15.0, -450.0]), np.array([15.0, 15.0, 30.0]), **self.limit_kw)
+                try:
+                    g.move_to(start - 440.0 * axes[:, 2], self.P.press, "come down until the bar meets the table", stall_mm=2.0)
+                except Blocked:
+                    g.recover()
+                else:
+                    g.move_to(start, self.P.lift, "back up: no table was met")
+                    g.lim = self._jog_limits()
+                    raise Refused("no table within 440 mm below the gripper")
+                g.move_to(g.where() + 4.0 * axes[:, 2], self.P.press, "ease off the table")  # the plan was a few mm into the table: now the bar just rests on it
+                g.grip(self.P.open_counts, "let go of the bar")
+                here = self.arm.pose()
+                with self.lock:
+                    d = Spots(side=self.chosen)
+                    d.add("T", here)
+                    for name, sign in (("P", -1.0), ("Q", 1.0)):
+                        d.add(name, np.r_[here[:3] + sign * (deep / 2.0 * axes[:, 0] + wide / 2.0 * axes[:, 1]), here[3:]])
+                    d.check().save(self.spots_path)
+                    self._adopt(d, thing_at="T")
+                came = float((start - here[:3]) @ axes[:, 2])
+                self.say(f"ARMED: the table is {came:.0f} mm below where the gripper was. The bar lies on T; the area is {wide:.0f} mm across and {deep:.0f} mm deep around it")
+                return f"the table was met {came:.0f} mm down; the bar lies on spot T"
+
+            self._small("find the table", act)
 
     def grip(self, close):
         with self.lock:
@@ -461,7 +546,7 @@ class Session:
                 self.arm.holding = None
                 self.arm.bricks = {**{f: sp.grasp(f).copy() for f in feeds[n_now:]}, **{f: sp.grasp(on) + k * h * sp.up for k, f in enumerate(feeds[:n_now])}}
             self.job = dict(steps=[], i=None, waiting=False, outcome=None, done=0, total=len(legs), src=legs[0]["src"], dst=legs[0]["dst"], rehearse=bool(rehearse), step=bool(step),
-                            fixed=None, kind="move", legs=legs, spots=sp, text=legs[0]["text"])
+                            fixed=None, kind="move", legs=legs, spots=sp, text=legs[0]["text"], tower=True)
             self._next.clear()
             self.worker = threading.Thread(target=self._work, daemon=True)
             self.worker.start()
@@ -472,10 +557,12 @@ class Session:
     def _work(self):
         job, g = self.job, self.guard
         legs, sp = job.get("legs"), job.get("spots") or self.spots  # a tower job brings its own legs and a higher travel height
-        rng, at = np.random.default_rng(), self.thing_at
+        rng, at, tower = np.random.default_rng(), self.thing_at, bool(job.get("tower"))
+        if self.sight is not None:
+            self.sight["stale"] = True  # what the camera saw is no longer what is there
 
         def lost():  # after a move that did not end as planned, nobody knows where the block is
-            if legs:
+            if tower:
                 self.stack = {**self.stack, "n": None}
             else:
                 self.thing_at = None
@@ -502,6 +589,8 @@ class Session:
                 with self.lock:
                     job.update(steps=steps, i=None, src=at, dst=dst, text=text)
                 self.say(f"move {k + 1} of {job['total']}: {text}" + (" (rehearsal in the air)" if job["rehearse"] else ""))
+                if leg.get("first"):
+                    leg["first"]()
                 rec = execute(g, steps, self.P, air=job["rehearse"], before=before)
                 with open(self.log_dir / "moves.jsonl", "a") as fh:
                     fh.write(json.dumps(dict(t=time.time(), src=at, dst=dst, src_up=leg["su"], dst_up=leg["du"], rehearse=job["rehearse"], **rec), default=float) + "\n")
@@ -514,10 +603,14 @@ class Session:
                 at = dst
                 job["done"] = k + 1
                 if not job["rehearse"]:
-                    if legs:
+                    if tower:
                         self.stack = {**self.stack, "n": self.stack["n"] + (1 if dst == self.stack["on"] else -1)}
                     else:
                         self.thing_at = dst
+                if leg.get("then"):
+                    leg["then"]()
+            if outcome == "done" and job.get("finish"):
+                job["finish"]()
         except NothingHeld as e:
             outcome = f"{e}. Say where " + ("the blocks are" if legs else "the thing is")
             lost()
@@ -529,6 +622,14 @@ class Session:
             outcome = f"{type(e).__name__}: {e}"
             if not job["rehearse"]:
                 lost()
+        except Exception as e:  # noqa: BLE001  a mistake in the program itself: stop the arm and say so, never report "done"
+            outcome = f"stopped: the program failed ({type(e).__name__}: {e})"
+            lost()
+            try:
+                self.arm.stop()
+            except Exception:  # noqa: BLE001
+                pass
+            raise
         finally:
             latched = g.latched
             with self.lock:
@@ -572,12 +673,14 @@ class Session:
                        arms=[dict(key=k, label=a["label"], ip=a.get("ip"), answers=None if a.get("ip") is None else self.reach.get(k)) for k, a in self.arms.items()],
                        calibration=dict(teaching=self.teaching, done=self.calibrated, spots=spots, lift_mm=None if sp is None else sp.lift, saved=self.saved(), note=self.note,
                                         busy=bool(self.teaching and self.worker is not None)),
-                       thing_at=self.thing_at, log=list(self.lines)[-40:], stack=self.stack, drop_mm=self.P.drop_mm,
+                       thing_at=self.thing_at, log=list(self.lines)[-40:], stack=self.stack, drop_mm=self.P.drop_mm, eye=self.sight_state(),
                        job=None if j is None or j.get("kind") != "move" else dict(steps=[x["name"] for x in j["steps"]], i=j["i"], waiting=j["waiting"], outcome=j["outcome"], done=j["done"],
                                                                                   total=j["total"], src=j["src"], dst=j["dst"], rehearse=j["rehearse"], text=j.get("text")))
             if self.connected:
                 if self.calibrated and "xyz" in s:
                     s["height_mm"] = round(float(np.asarray(s["xyz"]) @ self.spots.up - min(float(p @ self.spots.up) for p in self.spots.at.values())), 1)
+                if "rpy" in s:
+                    s["tilt_deg"] = round(float(np.degrees(np.arccos(np.clip(tool_axis(s["rpy"]) @ self.down(), -1.0, 1.0)))), 1)
                 out.update(arm=s, checks=[dict(text=t, ok=bool(ok), detail=d) for t, ok, d in self.checks()],
                            quest=dict(held=self.dm.held(), why=self.quest_why or self.dm.why(), frames=self.dm.n, hz=round(self._hz[2], 1), grip=getattr(self.dm, "last_grip", None)))
             return out

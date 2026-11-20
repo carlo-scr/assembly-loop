@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from .arms import ArmFault, rpy_matrix, twist_deg
+from .arms import ArmFault, matrix_rpy, rpy_matrix, twist_deg
 
 
 class Refused(RuntimeError):
@@ -55,7 +55,7 @@ class Limits:
     lo: np.ndarray
     hi: np.ndarray
     max_step_mm: float = 30.0
-    max_speed_mm_s: float = 60.0
+    max_speed_mm_s: float = 120.0
     acc_mm_s2: float = 500.0
     arrive_mm: float = 1.0
     inch_mm: float = 3.0  # segment length of a watched move
@@ -65,6 +65,10 @@ class Limits:
     turn_acc_deg_s2: float = 150.0
     turn_step_deg: float = 10.0  # a turn is sent in pieces of at most this, and checked after each
     turn_stall_deg: float = 1.5  # a joint this far behind its plan after a piece: something holds the gripper
+    tilt_step_deg: float = 5.0  # pointing the gripper down: the tilt is sent in pieces of at most this
+    tilt_speed: float = 15.0  # ... at this speed (read by the controller as degrees per second when nothing translates; not yet confirmed on the arm)
+    tilt_joint_deg: float = 12.0  # ... and no joint may move further than this during one piece: more means the arm is re-posing itself
+    tilt_drift_mm: float = 4.0  # ... nor may the flange leave its place by more than this
     j7_limit_deg: float = 340.0  # the last joint may go to 360; the lab stops at 350
     extra: dict = field(default_factory=dict)
 
@@ -339,6 +343,75 @@ class Guard:
         left, _ = twist_deg(rpy_matrix(self.arm.pose()[3:]), want)
         if abs(left) > 2.0:
             self._fail(f"{what}: the gripper ended {left:.1f} deg from the wanted turn")
+
+    def level(self, what="point the gripper down", down=(0.0, 0.0, -1.0)):
+        """Tilt the gripper until it points straight down, the flange staying where it is, in pieces of a few
+        degrees. This is the only move in which the controller is free to move every joint, so every joint is watched
+        while a piece runs: one that moves much further than the piece asks for means the arm is re-posing itself, and
+        the arm is stopped and the run ends. Returns how far it was tilted [deg]."""
+        self._alive()
+        pose = self.arm.pose()
+        xyz, R0, down = pose[:3].copy(), rpy_matrix(pose[3:]), np.asarray(down, float)
+        angle = float(np.degrees(np.arccos(np.clip(R0[:, 2] @ down, -1.0, 1.0))))
+        if angle < 0.3:
+            return 0.0
+        if angle > 95.0:
+            self.note("refused", what=what, why="tilt", tilt_deg=angle)
+            raise Refused(f"{what}: the gripper points {angle:.0f} deg away from straight down, which is too far to do in small pieces from here")
+        k = np.cross(R0[:, 2], down)
+        k = k / np.linalg.norm(k)
+        K = np.array([[0.0, -k[2], k[1]], [k[2], 0.0, -k[0]], [-k[1], k[0], 0.0]])
+        n = max(int(np.ceil(angle / self.lim.tilt_step_deg - 1e-9)), 1)
+        for i in range(n):
+            a = np.radians(angle * (i + 1) / n)
+            goal = matrix_rpy((np.eye(3) + np.sin(a) * K + (1.0 - np.cos(a)) * K @ K) @ R0)
+            self._tilt_piece(xyz, goal, what)
+            self.sleep(self.lim.settle_s)
+            try:
+                behind, drift = float(self.arm.joint_lag_deg()), float(np.linalg.norm(self.arm.pose()[:3] - xyz))
+            except ArmFault as e:
+                self._fail(str(e))
+            if behind > self.lim.turn_stall_deg:
+                self.arm.stop()
+                self.note("blocked", what=what, behind_deg=behind)
+                raise Blocked(f"{what}: a joint is {behind:.1f} deg behind its plan: something is holding the arm")
+            if drift > self.lim.tilt_drift_mm:
+                self._fail(f"{what}: the flange moved {drift:.1f} mm although it should stay in place")
+        return angle
+
+    def _tilt_piece(self, xyz, goal, what):
+        self._alive()
+        self._check_abort()
+        self._wait_hold(what, self.start_s)
+        self._check_fault()
+        want, j0 = rpy_matrix(goal), np.array(self.arm.joints(False), float)
+        piece = float(np.degrees(np.arccos(np.clip((np.trace(rpy_matrix(self.arm.pose()[3:]).T @ want) - 1.0) / 2.0, -1.0, 1.0))))
+        self.note("tilt", what=what, deg=piece, goal=np.asarray(goal, float))
+        try:
+            self.arm.pose_abs(xyz, goal, self.lim.tilt_speed, 100.0)
+        except ArmFault as e:
+            self._fail(str(e))
+        t0, budget, held_back = self.clock(), piece / self.lim.tilt_speed * 3.0 + 4.0, 0.0
+        while True:
+            self._check_abort()
+            self._check_fault(now=True)
+            swing = float(np.max(np.abs(np.array(self.arm.joints_now(), float) - j0)))
+            if swing > self.lim.tilt_joint_deg:
+                self._fail(f"{what}: a joint moved {swing:.0f} deg for a tilt of {piece:.1f} deg: the arm is re-posing itself. Point the gripper down by hand or in UFACTORY Studio")
+            if not self.deadman.held():
+                t_p = self.clock()
+                self.arm.pause()
+                self.note("pause", what=what)
+                self._wait_hold(what, self.resume_s, moving=True)
+                self.arm.resume()
+                self.note("resume", what=what)
+                held_back += self.clock() - t_p
+            off = float(np.degrees(np.arccos(np.clip((np.trace(rpy_matrix(self.arm.rpy_now()).T @ want) - 1.0) / 2.0, -1.0, 1.0))))
+            if off <= 0.5 and not self.arm.moving_now():
+                return
+            if self.clock() - t0 - held_back > budget:
+                self._fail(f"{what}: the tilt did not arrive ({off:.1f} deg short)")
+            self.sleep(self.poll_s)
 
     def grip(self, counts, what=""):
         self._alive()

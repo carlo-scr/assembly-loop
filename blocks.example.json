@@ -1,0 +1,162 @@
+{
+ "finger_mm": 40.0,
+ "jaw_mm": 85.0,
+ "kinds": [
+  {
+   "name": "red cube",
+   "shape": "box",
+   "size_mm": [
+    25.0,
+    25.0,
+    25.0
+   ],
+   "colour": "red"
+  },
+  {
+   "name": "red bar",
+   "shape": "box",
+   "size_mm": [
+    57.0,
+    25.0,
+    25.0
+   ],
+   "colour": "red"
+  },
+  {
+   "name": "red plank",
+   "shape": "box",
+   "size_mm": [
+    57.0,
+    25.0,
+    12.5
+   ],
+   "colour": "red"
+  },
+  {
+   "name": "red cylinder",
+   "shape": "cylinder",
+   "size_mm": [
+    25.0,
+    57.0
+   ],
+   "colour": "red"
+  },
+  {
+   "name": "yellow cube",
+   "shape": "box",
+   "size_mm": [
+    25.0,
+    25.0,
+    25.0
+   ],
+   "colour": "yellow"
+  },
+  {
+   "name": "yellow bar",
+   "shape": "box",
+   "size_mm": [
+    57.0,
+    25.0,
+    25.0
+   ],
+   "colour": "yellow"
+  },
+  {
+   "name": "yellow plank",
+   "shape": "box",
+   "size_mm": [
+    57.0,
+    25.0,
+    12.5
+   ],
+   "colour": "yellow"
+  },
+  {
+   "name": "yellow cylinder",
+   "shape": "cylinder",
+   "size_mm": [
+    25.0,
+    57.0
+   ],
+   "colour": "yellow"
+  },
+  {
+   "name": "green cube",
+   "shape": "box",
+   "size_mm": [
+    25.0,
+    25.0,
+    25.0
+   ],
+   "colour": "green"
+  },
+  {
+   "name": "green bar",
+   "shape": "box",
+   "size_mm": [
+    57.0,
+    25.0,
+    25.0
+   ],
+   "colour": "green"
+  },
+  {
+   "name": "green plank",
+   "shape": "box",
+   "size_mm": [
+    57.0,
+    25.0,
+    12.5
+   ],
+   "colour": "green"
+  },
+  {
+   "name": "green cylinder",
+   "shape": "cylinder",
+   "size_mm": [
+    25.0,
+    57.0
+   ],
+   "colour": "green"
+  },
+  {
+   "name": "blue cube",
+   "shape": "box",
+   "size_mm": [
+    25.0,
+    25.0,
+    25.0
+   ],
+   "colour": "blue"
+  },
+  {
+   "name": "blue bar",
+   "shape": "box",
+   "size_mm": [
+    57.0,
+    25.0,
+    25.0
+   ],
+   "colour": "blue"
+  },
+  {
+   "name": "blue plank",
+   "shape": "box",
+   "size_mm": [
+    57.0,
+    25.0,
+    12.5
+   ],
+   "colour": "blue"
+  },
+  {
+   "name": "blue cylinder",
+   "shape": "cylinder",
+   "size_mm": [
+    25.0,
+    57.0
+   ],
+   "colour": "blue"
+  }
+ ]
+}

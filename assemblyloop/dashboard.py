@@ -58,6 +58,7 @@ input[type=text],input[type=number],select{font:inherit;padding:7px 8px;border:1
 ol{margin:10px 0 0;padding-left:22px;columns:2;column-gap:28px}ol li{display:list-item;border:0;padding:2px 0;color:var(--mute)}ol li.cur{color:var(--ink);font-weight:700}ol li.past{color:var(--ok)}
 .pad{display:grid;grid-template-columns:repeat(3,minmax(84px,1fr)) minmax(84px,1fr);gap:6px;max-width:520px;margin:8px 0}.pad button:nth-child(4n){margin-left:18px}.pad button{padding:12px 6px}.pad i,button[data-t] i{font-style:normal;color:var(--mute);font-weight:400;margin-left:6px}
 pre{margin:0;font:12.5px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap;max-height:230px;overflow:auto;color:var(--mute)}
+#e_img{width:100%;border-radius:8px;margin-top:10px;border:1px solid var(--line)}
 #msg{color:var(--no);min-height:1.3em;font-weight:600;margin-top:8px}[hidden]{display:none!important}
 @media (max-width:700px){ol{columns:1}}
 </style></head><body>
@@ -86,12 +87,17 @@ pre{margin:0;font:12.5px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap;m
 <div class="pad"><span></span><button data-j="fwd">Forward<i>W</i></button><span></span><button data-j="up">Up<i>Q</i></button>
 <button data-j="left">Left<i>A</i></button><span></span><button data-j="right">Right<i>D</i></button><span></span>
 <span></span><button data-j="back">Back<i>S</i></button><span></span><button data-j="down">Down<i>E</i></button></div>
-<div class="row"><label>Step<select id="jogmm"><option value="1">1 mm</option><option value="5" selected>5 mm</option><option value="20">20 mm</option></select></label>
+<div class="row"><label>Step<select id="jogmm"><option value="1">1 mm</option><option value="5" selected>5 mm</option><option value="20">20 mm</option><option value="50">50 mm</option></select></label>
 <button id="gopen">Open gripper</button><button id="gclose">Close gripper</button></div>
 <div class="row"><label>Turn by<select id="jogdeg"><option value="5">5°</option><option value="15" selected>15°</option><option value="45">45°</option><option value="90">90°</option></select></label>
 <button data-t="ccw">Turn ⟲<i>Z</i></button><button data-t="cw">Turn ⟳<i>C</i></button></div>
+<div class="row"><button id="levelbtn">Point the gripper down</button><span class="note" id="tiltnote"></span></div>
 <div class="note" id="jognote"></div>
 <div class="note">Forward is away from the robot's base. Up and down follow the gripper's own axis, so it should point at the table. Turning spins the gripper in place (only its last joint moves). Every nudge is slow and ends by itself if something is in the way.</div>
+<h3>Find the table by itself</h3>
+<div class="row"><label>Area across (mm)<input type="number" id="ft_w" value="200" min="100" max="400" step="10"></label><label>Area deep (mm)<input type="number" id="ft_d" value="140" min="100" max="400" step="10"></label><button id="ftbtn" class="go">Find the table</button></div>
+<div class="note">Instead of teaching spots by hand. Bring the gripper over the middle of the area the blocks will lie in, pointing straight down. Hold a green or blue bar between the open jaws by its ends, lying level, the jaws across its short side, and press Close gripper. Then press Find the table and hold the grip: the gripper comes straight down slowly until the bar meets the mat, lets go, and the label reads ARMED. Let go of the grip if it visibly pushes into the table. The tower will stand where the bar was put down.</div>
+<h3>Or teach spots by hand</h3>
 <div class="row"><label>Name of this spot<input type="text" id="spotname" value="A" size="6" maxlength="12"></label><button id="spotbtn" class="go">Save spot here</button></div>
 <ul id="spots_edit"></ul>
 <div class="row"><label>Lift between spots (mm)<input type="number" id="lift" value="80" min="30" max="200" step="5"></label><button id="donebtn" class="go">Done</button>
@@ -110,6 +116,16 @@ pre{margin:0;font:12.5px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap;m
 <div class="row"><button id="tw_build" class="go">Build</button><button id="tw_down">Take down</button><button id="tw_loop">Build and take down, for the rounds</button></div>
 <div class="note" id="tw_note"></div>
 <div id="outcome" class="note"></div><ol id="steps"></ol></section>
+
+<section class="two"><h2>Camera</h2>
+<div class="note" id="e_why"></div>
+<div class="row"><button id="lookbtn">Look</button><label>Tower stands on<select id="e_on"></select></label><button id="e_build" class="go">Build a tower from what it sees</button></div>
+<div class="note" id="e_plan"></div>
+<img id="e_img" alt="What the camera saw, with the blocks it made out drawn in" hidden>
+<ul id="e_seen"></ul>
+<h3>Show the camera the table</h3>
+<div class="row"><label>With this block<select id="e_kind"></select></label><label>Places<input type="number" id="e_n" value="12" min="8" max="20"></label><button id="e_show">Show the camera the table</button></div>
+<div class="note">Once, and again whenever the camera or the table was moved. Teach spots at opposite corners of the area the blocks will lie in. Lay ONE bar or slab flat on a spot, jaws across its short side, say under "The block stands on" which spot that is, and keep everything else off the mat. The arm carries the block to each place and steps aside for a picture; hold the grip throughout. Blocks must lie on the grey mat and must not touch each other.</div></section>
 
 <section class="wide"><h2>Log</h2><pre id="log"></pre></section>
 </main>
@@ -154,6 +170,9 @@ function render(s){
   show("c_none",!s.connected); show("c_dis",s.connected&&s.phase==="DISARMED"); show("c_teach",teachOn); show("c_view",s.connected&&c.done&&!teachOn);
   document.querySelectorAll("#c_teach button").forEach(b=>{ b.disabled=c.busy; });
   $("jognote").textContent=c.busy?"moving while you hold the grip…":(c.note||"");
+  const tilt=(s.arm||{}).tilt_deg==null? null : s.arm.tilt_deg;
+  $("levelbtn").disabled=c.busy||tilt==null||tilt<0.5||c.spots.length>0;
+  $("tiltnote").textContent=tilt==null?"":(tilt<0.5?"The gripper points straight down.":`The gripper is tilted ${tilt.toFixed(0)}° from straight down. Tilting keeps the flange in place and swings the fingertips sideways: keep the space around the gripper free.`+(c.spots.length?" Remove the saved spots first.":""));
   $("c_status").textContent=c.done? `Known: ${c.spots.length} spots, lift ${c.lift_mm} mm.`:"";
   $("spots_view").replaceChildren(...(c.done&&!teachOn?c.spots:[]).map(x=>li("•","w","Spot "+x.name,"")));
   $("calbtn").disabled=s.phase!=="ARMED";
@@ -168,7 +187,7 @@ function render(s){
   const ready=(s.checks||[]).length>0&&s.checks.every(k=>k.ok); $("armbtn").disabled=!(s.phase==="DISARMED"&&ready); $("disbtn").disabled=!["ARMED","RUNNING","PAUSED"].includes(s.phase);
   // move
   const names=c.done?c.spots.map(x=>x.name):[];
-  once("names", names, ()=>{ options($("thing"),names,[["","— say where —"]]); options($("dst"),names,[["","a spot picked at random"]]); options($("tw_on"),names,[["","— which spot —"]]); lastThing=undefined; });
+  once("names", names, ()=>{ options($("thing"),names,[["","— say where —"]]); options($("dst"),names,[["","a spot picked at random"]]); options($("tw_on"),names,[["","— which spot —"]]); options($("e_on"),names,[["","— which spot —"]]); lastThing=undefined; });
   const st=s.stack, nNow=st?st.n:undefined; if(nNow!==lastN){ lastN=nNow; if(st){ $("tw_n").value=st.n==null?"":st.n; $("tw_on").value=st.on; } }
   const on=$("tw_on").value, feeds=names.filter(n=>n!==on).slice(0,6); ["tw_build","tw_down","tw_loop"].forEach(id=>{ $(id).disabled=s.phase!=="ARMED"; });
   $("tw_note").textContent=!c.done?"":(!on?"Choose the spot the tower stands on. One block stands on every other spot.":`One block stands on each of ${feeds.join(", ")}. They go onto ${on} in that order: the first at the taught height, each next one a block height higher, let go ${s.drop_mm} mm above the one below. Taking down goes top first, every block back to its own spot.`+(st&&st.n==null?" The last run did not end as planned: say how many blocks stand on the tower now.":""));
@@ -176,6 +195,15 @@ function render(s){
   const j=s.job, busy=["RUNNING","PAUSED"].includes(s.phase); $("gobtn").disabled=s.phase!=="ARMED"; $("nextbtn").disabled=!(j&&j.waiting&&busy);
   $("outcome").textContent=!j?"":(busy? `Move ${Math.min(j.done+1,j.total)} of ${j.total}: ${j.text||(j.src+" to "+j.dst)}`+(j.rehearse?" (rehearsal)":"")+(j.waiting?" · waiting for Next step":"") : `Last: ${j.done} of ${j.total} done. ${j.outcome||""}`);
   $("steps").replaceChildren(...(j&&busy?j.steps:[]).map((n,i)=>{const e=document.createElement("li"); e.textContent=n; if(j.i!=null){ if(i<j.i)e.className="past"; if(i===j.i)e.className="cur"; } return e;}));
+  // camera
+  const e=s.eye||{}, g=e.sight;
+  $("e_why").textContent=e.why? e.why.charAt(0).toUpperCase()+e.why.slice(1)+"." : (e.shown? `The camera was shown the table on ${e.shown} and found the block within ${e.fit_mm} mm.`:"");
+  once("bars", e.bars||[], ()=>options($("e_kind"),e.bars||[],[]));
+  $("lookbtn").disabled=!e.shown||busy; $("e_show").disabled=s.phase!=="ARMED"||!(e.bars||[]).length;
+  $("e_build").disabled=!(s.phase==="ARMED"&&e.ready&&g&&!g.stale&&g.order.length);
+  once("img", g?g.t:null, ()=>{ show("e_img",!!g); if(g) $("e_img").src="/api/sight.jpg?t="+g.t; });
+  once("seen", g?[g.t,g.stale]:null, ()=>{ $("e_seen").replaceChildren(...(g? g.seen.map(b=>li("✓","y",b.name,`${b.lies}, outline fits ${b.fit}%`)).concat(g.unknown.map(w=>li("?","n","Not made out",w))) : [])); });
+  $("e_plan").textContent=!g?"":((g.stale?"This picture is from before the last move: press Look again. ":"")+(g.order.length? `Tower, bottom first: ${g.order.join(", ")} (${g.height_mm} mm high).`:"Nothing in this picture can go onto a tower.")+(g.left_out.length?" Left out: "+g.left_out.join("; ")+".":""));
   // arm
   const a=s.arm; dl($("arm"), a? [["Controller error",a.error==null?"…":(a.error? "ERROR "+a.error:"none")],["Height above the lowest spot",a.height_mm==null?"known once calibrated":f1(a.height_mm)+" mm"],
     ["Measured against planned",a.lag_mm==null?"…":f1(a.lag_mm)+" mm apart"],["Moving",a.moving?"yes":"no"]].concat(a.read_error?[["Read problem",a.read_error]]:[]) : [["Status","no session"]]);
@@ -194,7 +222,7 @@ const jog=dir=>post("/api/jog",{dir:dir,mm:+$("jogmm").value});
 document.querySelectorAll("button[data-j]").forEach(b=>{ b.onclick=()=>jog(b.dataset.j); });
 const turn=dir=>post("/api/turn",{dir:dir,deg:+$("jogdeg").value});
 document.querySelectorAll("button[data-t]").forEach(b=>{ b.onclick=()=>turn(b.dataset.t); });
-$("gopen").onclick=()=>post("/api/grip",{close:false}); $("gclose").onclick=()=>post("/api/grip",{close:true});
+$("levelbtn").onclick=()=>post("/api/level"); $("ftbtn").onclick=()=>post("/api/find_table",{wide:+$("ft_w").value,deep:+$("ft_d").value}); $("gopen").onclick=()=>post("/api/grip",{close:false}); $("gclose").onclick=()=>post("/api/grip",{close:true});
 // the lab's own nudge keys: W/S away from and towards the base, A/D left and right, Q/E up and down
 const KEYS={KeyW:"fwd",KeyS:"back",KeyA:"left",KeyD:"right",KeyQ:"up",KeyE:"down"};
 const TURN={KeyZ:"ccw",KeyC:"cw"};
@@ -205,6 +233,8 @@ $("thing").onchange=()=>{ if($("thing").value) post("/api/thing",{spot:$("thing"
 $("gobtn").onclick=()=>post("/api/move",{dst:$("dst").value||null,count:+$("count").value,rehearse:$("rehearse").checked,step:$("step").checked});
 $("nextbtn").onclick=()=>post("/api/next");
 const tower=what=>post("/api/tower",{on:$("tw_on").value,block_mm:+$("tw_h").value,n_now:$("tw_n").value===""?null:+$("tw_n").value,what:what,rounds:+$("tw_r").value,rehearse:$("rehearse").checked,step:$("step").checked});
+$("lookbtn").onclick=()=>post("/api/look"); $("e_show").onclick=()=>post("/api/show_table",{kind:$("e_kind").value,n:+$("e_n").value,step:$("step").checked});
+$("e_build").onclick=()=>post("/api/build_seen",{on:$("e_on").value,rehearse:$("rehearse").checked,step:$("step").checked});
 $("tw_build").onclick=()=>tower("build"); $("tw_down").onclick=()=>tower("down"); $("tw_loop").onclick=()=>tower("loop");
 // With the stand-in arm the space bar stands in for the grip. Like the headset, the page reports its state ALL the time
 // (pressed or not), so that a closed or frozen page reads as "no signal", not as "released and fine".
@@ -231,6 +261,10 @@ def make_server(session, port=8777):
             session.jog(str(b.get("dir")), b.get("mm", 5))
         elif path == "/api/turn":
             session.turn(str(b.get("dir")), b.get("deg", 15))
+        elif path == "/api/level":
+            session.level()
+        elif path == "/api/find_table":
+            session.find_table(b.get("wide", 200), b.get("deep", 140))
         elif path == "/api/grip":
             session.grip(bool(b.get("close")))
         elif path == "/api/spot":
@@ -247,6 +281,12 @@ def make_server(session, port=8777):
             session.tower(str(b.get("on")), b.get("block_mm"), str(b.get("what", "build")), b.get("rounds", 1), b.get("n_now"), bool(b.get("rehearse")), bool(b.get("step")))
         elif path == "/api/next":
             session.next_step()
+        elif path == "/api/look":
+            session.look()
+        elif path == "/api/show_table":
+            session.show_table(str(b.get("kind")), b.get("n", 12), bool(b.get("step")))
+        elif path == "/api/build_seen":
+            session.build_seen(str(b.get("on")), bool(b.get("rehearse")), bool(b.get("step")))
         elif path == "/api/hold":
             if session.hold != "page":
                 raise Refused("with this arm the only hold-to-run switch is the Quest grip")
@@ -278,6 +318,8 @@ def make_server(session, port=8777):
                 return self._send(PAGE.replace("__TOKEN__", token).encode(), kind="text/html; charset=utf-8")
             if self.path == "/api/state":
                 return self._send(session.state())
+            if self.path.split("?")[0] == "/api/sight.jpg" and session.sight_jpg():
+                return self._send(session.sight_jpg(), kind="image/jpeg")
             return self._send(dict(error="not found"), HTTPStatus.NOT_FOUND)
 
         def do_POST(self):

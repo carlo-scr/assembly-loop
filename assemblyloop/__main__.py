@@ -4,6 +4,7 @@
                                                            (it opens at OFF; choose the right arm, the left arm or a stand-in there)
   python -m assemblyloop status --ip 192.168.1.199         READ-ONLY: connects, prints the arm's state, disconnects
   python -m assemblyloop deadman --port 6666               shows whether the Quest grip arrives (no arm involved)
+  python -m assemblyloop look --out look.jpg               one picture from the camera with what it makes out drawn in (no arm involved)
 
 Press-fit bricks on a taught stud plate (command line only; older than the dashboard):
   python -m assemblyloop demo-plate --out plate_demo.json  a made-up taught file, for trying `plan` anywhere
@@ -98,6 +99,32 @@ def cmd_status(a):
         print(f"  {k:22s} {v}")
     print("  (read only: nothing was enabled, cleared or changed)")
     return st
+
+
+def cmd_look(a):
+    """One picture. Before the camera was shown the table (no camera.json) it can only outline what is coloured."""
+    from . import eyes
+    from .blocks import Catalogue
+
+    im = eyes.cv2.imread(a.picture) if a.picture else eyes.grab(a.camera or eyes.SCENE_CAMERA)
+    if im is None:
+        raise SystemExit(f"{a.picture} is not a picture")
+    if Path(a.setup).exists() and Path(a.blocks).exists():
+        setup, cat = eyes.Setup.load(a.setup), Catalogue.load(a.blocks)
+        tall = max(r.height for k in cat.kinds for r in k.rests())
+        seen, unknown, blobs = eyes.look(im, setup.camera, setup.table, cat, setup.region((im.shape[1], im.shape[0]), tall))
+        for s in seen:
+            print(f"  {s.name:22s} {s.rest.name:12s} at {s.uv[0]:7.1f}, {s.uv[1]:7.1f} mm, long side at {s.angle:5.1f} deg, outline fits {100 * s.score:.0f}%")
+        for _, why in unknown:
+            print(f"  not made out: {why}")
+        out = eyes.draw(im, blobs, seen, unknown, setup.camera, setup.table)
+    else:
+        blobs = eyes.find_blobs(im)
+        print(f"  {len(blobs)} coloured patches: " + ", ".join(f"{b.colour} ({b.area} px)" for b in blobs))
+        print(f"  (outlines only: {a.setup if not Path(a.setup).exists() else a.blocks} is missing)")
+        out = eyes.draw(im, blobs)
+    eyes.cv2.imwrite(a.out, out)
+    print(f"wrote {a.out}")
 
 
 def cmd_teach(a):
@@ -196,7 +223,12 @@ def cmd_dashboard(a):
     from .dashboard import make_server
     from .session import Session, default_arms
 
-    ses = Session(default_arms(a.right, a.left), quest_port=a.quest_port, hand=a.hand, spots_path=a.spots, log_dir=a.log, say=print)
+    camera = None
+    if a.camera:
+        from .eyes import V4L2
+
+        camera = V4L2(a.camera)
+    ses = Session(default_arms(a.right, a.left, a.mount_deg), quest_port=a.quest_port, hand=a.hand, spots_path=a.spots, log_dir=a.log, say=print, camera=camera)
     srv = make_server(ses, a.port)
     print(f"dashboard: http://127.0.0.1:{srv.server_address[1]}/   (nothing is connected until you start a session on the page; Ctrl-C here stops the arm and closes)")
     try:
@@ -236,6 +268,12 @@ def main(argv=None):
     s.add_argument("--port", type=int, default=6666)
     s.add_argument("--hand", default="right")
     s.add_argument("--seconds", type=float, default=20.0)
+    s = sub.add_parser("look")
+    s.add_argument("--camera", default=None, help="the camera's device (default: the rig's left scene camera)")
+    s.add_argument("--picture", default=None, help="look at this picture file instead of taking one")
+    s.add_argument("--out", default="look.jpg")
+    s.add_argument("--setup", default="camera.json")
+    s.add_argument("--blocks", default="blocks.json")
     s = sub.add_parser("status")
     s.add_argument("--ip", required=True)
     s = sub.add_parser("teach")
@@ -250,6 +288,8 @@ def main(argv=None):
     s.add_argument("--right", default="192.168.1.199", help="address of the right arm")
     s.add_argument("--left", default="192.168.1.219", help="address of the left arm")
     s.add_argument("--spots", default="spots.json", help="where taught spots are kept")
+    s.add_argument("--mount_deg", type=float, default=45.0, help="how far the arms are rolled about their forward axis where they are mounted (0: upright)")
+    s.add_argument("--camera", default=None, help="the camera that looks at the table (default: the rig's left scene camera)")
     s.add_argument("--quest_port", type=int, default=6666)
     s.add_argument("--hand", default="right")
     s.add_argument("--port", type=int, default=8777)
@@ -259,7 +299,7 @@ def main(argv=None):
         Path(a.out).write_text(json.dumps(demo(), indent=1))
         print(f"wrote {a.out} (made up, for `plan` only)")
         return None
-    return dict(plan=cmd_plan, deadman=cmd_deadman, status=cmd_status, teach=cmd_teach, run=cmd_run, dashboard=cmd_dashboard)[a.cmd](a)
+    return dict(plan=cmd_plan, deadman=cmd_deadman, status=cmd_status, teach=cmd_teach, run=cmd_run, dashboard=cmd_dashboard, look=cmd_look)[a.cmd](a)
 
 
 if __name__ == "__main__":
