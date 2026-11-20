@@ -14,16 +14,32 @@ are meant to follow on the same base.
 
 ## Run it
 
-It needs Python 3.9 or newer, numpy, and for a real arm UFACTORY's xArm Python SDK. The environment the lab's
-teleoperation runs in has all three.
+It needs Python 3.9 or newer, numpy, and for a real arm UFACTORY's xArm Python SDK. Set these up once, in an
+environment inside this folder, so that nothing else on the machine is touched:
 
 ```
 git clone https://github.com/carlo-scr/assembly-loop.git
 cd assembly-loop
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[real]"
+```
+
+From then on, in every new terminal:
+
+```
+cd assembly-loop
+source .venv/bin/activate
 python -m assemblyloop dashboard
 ```
 
 Then open `http://127.0.0.1:8777/` in a browser on the same machine.
+
+- **`python: command not found`** means the environment is not active in that terminal: run the `source` line.
+- **`python3 -m venv` fails** (some Ubuntu installs lack it): with [uv](https://docs.astral.sh/uv/) installed, use
+  `uv venv && uv pip install -e ".[real]"` instead of the two lines after `cd`.
+- **The arm does not answer:** the machine needs an address on the arm's network (192.168.1.x) on its wired port.
+  `ip -4 -brief addr` shows whether it has one.
 
 - **Teleoperation must be closed first.** Both listen for the Quest on port 6666.
 - **Without a robot,** choose "Stand-in arm" on the page. The space bar stands in for the grip.

@@ -8,7 +8,7 @@ authors = [{name = "Carlo Schreiber"}]
 dependencies = ["numpy>=1.21"]
 
 [project.optional-dependencies]
-real = ["xarm-python-sdk>=1.13"]  # the arm's SDK; the lab laptop's teleoperation environment already has it
+real = ["xarm-python-sdk==1.18.4"]  # the arm's SDK, at the version the lab's own tools pin
 dev = ["pytest>=8", "ruff>=0.5"]
 
 [project.scripts]
