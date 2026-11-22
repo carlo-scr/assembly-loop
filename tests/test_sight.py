@@ -1,4 +1,6 @@
 """The camera in a session: the stand-in arm, watched by a made-up camera that draws the stand-in blocks."""
+import json
+import re
 import threading
 import time
 
@@ -45,6 +47,7 @@ class Scene:
         im = np.full((self.cam.size[1], self.cam.size[0], 3), (110, 100, 95), np.uint8)
         for name, p in self.ses.arm.bricks.items():
             kind, rest, angle = self.what[name]
+            angle += self.ses.arm.turned.get(name, 0.0)  # turned with the gripper while it was held
             rest, c = CAT.kind(kind).rests()[rest], axes.T @ p
             bottom = c[2] - max(0.0, rest.height - CAT.finger_mm) - BAR.height / 2.0
             hull = outline(self.cam, solid(rest, Table(axes, bottom), c[0], c[1], angle, CAT.kind(kind).shape))
@@ -146,9 +149,12 @@ def test_the_camera_is_shown_the_table_then_sees_blocks_and_a_tower_is_built_fro
         assert abs(float(d @ sp.up) - level_mm) < 0.6 and np.linalg.norm(d - (d @ sp.up) * sp.up) < 2.5, (name, d)
     assert np.linalg.norm(a.bricks["lying"] - table.point(*table.coords([490.0, 70.0, 0.0])[:2], setup.w_grasp)) < 1e-6  # the lying cylinder was not touched
     assert len([e for e in a.log if e[0] == "turn"]) > turns  # the gripper was turned to take the bar across its short side
-    with pytest.raises(Refused, match="Look first"):  # what the camera saw is no longer what is there
-        ses.build_seen("T")
-    ses.look()
+    # the camera checked every block once it was put down, from out of its way, and kept every picture
+    checks = [json.loads(line) for line in open(ses.log_dir / "moves.jsonl") if '"check"' in line]
+    assert [c["check"] for c in checks] == [1, 2, 3] and not any(c["problems"] for c in checks), checks
+    assert all((ses.log_dir / "pictures" / c["picture"]).exists() for c in checks) and [len(c["blocks"]) for c in checks] == [1, 2, 3]
+    assert all(b["fit"] > 0.9 and b["off_mm"] < 4.0 and abs(b["turn_deg"]) < 3.0 for c in checks for b in c["blocks"] if b["visible"] > 0.3), checks
+    # its last picture was taken after the last block: the next job may start from it, and sees the tower in the way
     with pytest.raises(Refused, match="where the tower goes"):
         ses.build_seen("T")
 
@@ -295,3 +301,84 @@ def test_the_live_pictures_know_the_block_finders_camera_and_the_stand_in_gets_a
         assert ok and im.shape == (480, 640, 3) and im.dtype == np.uint8
     jpg, size = feeds.to_jpeg(np.zeros((1080, 1920, 3), np.uint8))  # a large picture is made smaller for the page
     assert jpg[:2] == b"\xff\xd8" and size == (960, 540)
+
+
+def lay_out(ses, blocks):
+    """Put stand-in blocks on the mat: {name: (kind, rest index, x, y, angle)} in the arm's base frame; the camera draws them."""
+    a, setup = ses.arm, ses.setup
+    a.holding, a.bricks, a.turned = None, {}, {}
+    for name, (kind, rest, x, y, angle) in blocks.items():
+        r = CAT.kind(kind).rests()[rest]
+        uv = setup.table.coords([x, y, 0.0])[:2]
+        a.bricks[name] = setup.table.point(uv[0], uv[1], setup.w_grasp + max(0.0, r.height - CAT.finger_mm))
+        a.widths[name] = r.short
+        ses.camera.what[name] = (kind, rest, angle)
+
+
+def shown(ses):
+    CAT.save(ses.blocks_path)
+    ses.pressed = True
+    ses.show_table("green bar")
+    assert until(lambda: ses.worker is None, 120) and ses.job["outcome"] == "done"
+
+
+def test_a_block_pushed_on_the_mat_is_taken_where_it_lies_now_and_turned_as_it_lies(ses):
+    shown(ses)
+    lay_out(ses, {"slab": ("blue slab", 0, 430.0, 70.0, 100.0), "bar": ("green bar", 0, 445.0, -95.0, 30.0)})
+    ses.look()
+    a, moved = ses.arm, []
+
+    def push(k):  # after the slab is on the tower, someone pushes the bar 12 mm and turns it by 25 degrees
+        moved.append(k)
+        if k == 0:
+            a.bricks["bar"] = a.bricks["bar"] + ses.setup.table.axes[:, 0] * 12.0
+            a.turned["bar"] = 25.0
+
+    real = ses._check_built
+    ses._check_built = lambda job, k, at: (push(k), real(job, k, at))
+    ses.build_seen("T")
+    assert until(lambda: ses.worker is None, 120)
+    assert ses.job["outcome"] == "done" and ses.stack["n"] == 2, (ses.job["outcome"], list(ses.lines)[-6:])
+    assert any("12 mm from where it was seen before" in line for line in ses.lines), list(ses.lines)[-12:]
+    d = a.bricks["bar"] - ses.spots.grasp("T")
+    assert np.linalg.norm(d - (d @ ses.spots.up) * ses.spots.up) < 2.5  # it ended on the tower all the same
+
+
+def test_a_block_that_fell_off_stops_the_job_and_a_wrong_width_stops_the_pick(ses):
+    shown(ses)
+    lay_out(ses, {"slab": ("blue slab", 0, 430.0, 70.0, 100.0), "bar": ("green bar", 0, 445.0, -95.0, 30.0), "cube": ("yellow cube", 0, 395.0, -20.0, 10.0)})
+    ses.look()
+    a = ses.arm
+    real = ses._check_built
+
+    def knock(job, k, at):
+        if k == 1:  # the second block of the tower (widest first: slab, cube, bar) slides off once it is put down
+            a.bricks["cube"] = a.bricks["cube"] + ses.setup.table.axes[:, 1] * 45.0
+        return real(job, k, at)
+
+    ses._check_built = knock
+    ses.build_seen("T")
+    assert until(lambda: ses.worker is None, 120)
+    out = ses.job["outcome"]
+    assert re.match(r"the camera: the yellow cube \(step 2\) is 4[3-9] mm", out) and ses.stack["n"] is None and ses.phase() == "ARMED", (out, ses.stack)  # found 45 mm off; stopped, still armed
+    assert np.linalg.norm(a.bricks["bar"] - ses.spots.grasp("T")) > 50.0  # the bar was not put onto it
+    checks = [json.loads(line) for line in open(ses.log_dir / "moves.jsonl") if '"check"' in line]
+    assert [c["check"] for c in checks] == [1, 2] and checks[-1]["problems"] and not checks[0]["problems"]
+    # the jaws close to another width than the block meant: taken the wrong way round, say
+    ses._check_built = real
+    lay_out(ses, {"slab": ("blue slab", 0, 430.0, 70.0, 100.0), "bar": ("green bar", 0, 445.0, -95.0, 30.0)})
+    a.widths["slab"] = 60.0
+    ses.look()
+    ses.build_seen("T")
+    assert until(lambda: ses.worker is None, 120)
+    assert "the jaws closed to 60 mm, but the block is 40 mm across" in ses.job["outcome"] and a.holding is None, ses.job["outcome"]
+
+
+def test_without_the_check_no_picture_is_taken_between_blocks(ses):
+    shown(ses)
+    lay_out(ses, {"slab": ("blue slab", 0, 430.0, 70.0, 100.0), "bar": ("green bar", 0, 445.0, -95.0, 30.0)})
+    ses.look()
+    n = ses.camera.n
+    ses.build_seen("T", check=False)
+    assert until(lambda: ses.worker is None, 120) and ses.job["outcome"] == "done"
+    assert ses.camera.n == n and not (ses.log_dir / "pictures").exists()

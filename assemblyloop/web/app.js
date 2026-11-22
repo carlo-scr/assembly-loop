@@ -174,8 +174,8 @@ $("nextbtn").onclick = () => post("/api/next");
 const tower = what => post("/api/tower", {on: $("tw_on").value, block_mm: +$("tw_h").value, n_now: $("tw_n").value === "" ? null : +$("tw_n").value, what: what, rounds: +$("tw_r").value, rehearse: $("rehearse").checked, step: $("step").checked});
 $("tw_build").onclick = () => tower("build"); $("tw_down").onclick = () => tower("down"); $("tw_loop").onclick = () => tower("loop");
 $("lookbtn").onclick = () => post("/api/look"); $("e_show").onclick = () => { closePops(); post("/api/show_table", {kind: $("e_kind").value, n: +$("e_n").value, step: $("step").checked}); };
-$("e_build").onclick = () => post("/api/build_seen", {on: $("e_on").value, rehearse: $("rehearse").checked, step: $("step").checked});
-$("d_build").onclick = () => post("/api/build_design", {name: $("d_name").value, on: $("d_on").value, rehearse: $("rehearse").checked, step: $("step").checked});
+$("e_build").onclick = () => post("/api/build_seen", {on: $("e_on").value, rehearse: $("rehearse").checked, step: $("step").checked, check: $("camcheck").checked});
+$("d_build").onclick = () => post("/api/build_design", {name: $("d_name").value, on: $("d_on").value, rehearse: $("rehearse").checked, step: $("step").checked, check: $("camcheck").checked});
 async function designs() {  // the saved designs and the examples, for the Camera tab
   try { const j = await (await fetch("/api/designs")).json(); once("designs", j.designs, () => options($("d_name"), (j.designs || []).map(d => d.name), [["", "— which design —"]])); }
   catch (e) { /* the list stays as it was */ }

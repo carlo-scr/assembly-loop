@@ -319,9 +319,9 @@ def make_server(session, port=8777):
         elif path == "/api/show_table":
             session.show_table(str(b.get("kind")), b.get("n", 12), bool(b.get("step")))
         elif path == "/api/build_seen":
-            session.build_seen(str(b.get("on")), bool(b.get("rehearse")), bool(b.get("step")))
+            session.build_seen(str(b.get("on")), bool(b.get("rehearse")), bool(b.get("step")), bool(b.get("check", True)))
         elif path == "/api/build_design":
-            session.build_design(str(b.get("name")), str(b.get("on")), bool(b.get("rehearse")), bool(b.get("step")))
+            session.build_design(str(b.get("name")), str(b.get("on")), bool(b.get("rehearse")), bool(b.get("step")), bool(b.get("check", True)))
         elif path == "/api/hold":
             if session.hold != "page":
                 raise Refused("with this arm the only hold-to-run switch is the Quest grip")

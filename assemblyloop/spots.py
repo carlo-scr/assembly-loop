@@ -138,10 +138,11 @@ def demo_spots():
     return s
 
 
-def plan_move(spots, src, dst, here, P, rehearse=False, src_up=0.0, dst_up=0.0, release_counts=None):
+def plan_move(spots, src, dst, here, P, rehearse=False, src_up=0.0, dst_up=0.0, release_counts=None, grip_mm=None):
     """Steps to take the thing at `src` and put it down at `dst`, starting from wherever the arm is (`here`).
     `src_up` / `dst_up` [mm] raise the pick-up / the put-down above the taught spot (the levels of a tower).
     `release_counts`: let go by opening only this far (a design's block, whose neighbours stand close), not fully.
+    `grip_mm`: how wide the block is across the jaws, if known: closing to another width stops the move (WrongGrip).
     A rehearsal does the same travel at the travel height and never comes down."""
     if src == dst:
         raise Refused("from and to are the same spot")
@@ -156,7 +157,7 @@ def plan_move(spots, src, dst, here, P, rehearse=False, src_up=0.0, dst_up=0.0, 
     if not rehearse:
         first = gs + min(20.0, spots.lift) * up
         S += [dict(name=f"lower around the thing at {ns}", kind="move", to=gs, speed=P.slow, stall_mm=P.stall_mm),
-              dict(name="close on it", kind="grip", counts=P.shut_counts, must_hold=True),
+              dict(name="close on it", kind="grip", counts=P.shut_counts, must_hold=True, expect_mm=grip_mm),
               dict(name="read the grasp", kind="read"),
               dict(name="lift it, slowly at first", kind="move", to=first, speed=P.press, stall_mm=P.pull_stall_mm, let_go_if_blocked=True),
               dict(name="lift to the travel height", kind="move", to=hs, speed=P.lift)]

@@ -144,6 +144,7 @@ class FakeArm:
         self.j7, self.j7_real, self.turn_target, self.turn_speed = 0.0, 0.0, None, 0.0  # the last joint: planned, measured, where it is going
         self.turn_sign, self.turn_stuck = 1.0, False  # which way the gripper spins for +joint 7; a gripper that is held and cannot turn
         self.tilt, self.swing_deg = None, 0.0  # a tilt under way: [wanted rpy, seconds left]; how far a joint jumps during one (to try the guard)
+        self.widths, self.turned = {}, {}  # a brick's width across the jaws [mm] (if not known: BRICK_COUNTS); how far each was turned about up [deg] while held
 
     # --- simulated time
     def advance(self, dt):
@@ -164,6 +165,8 @@ class FakeArm:
             if not self.turn_stuck:
                 self.j7_real = self.j7
                 self.rpy = matrix_rpy(rpy_matrix(self.rpy) @ _rz(self.turn_sign * step))
+                if self.holding is not None:  # the gripper points down: turning about its own axis turns what it holds the other way about up
+                    self.turned[self.holding[0]] = self.turned.get(self.holding[0], 0.0) - self.turn_sign * step
         if self.target is None or self.paused or self.stopped:
             return
         d = self.target - self.plan
@@ -271,7 +274,7 @@ class FakeArm:
             off = at - self.p
             high = float(off @ self.up)  # the jaws must be at the brick's height, and within reach along the plate
             if abs(high) <= 3.0 and float(np.linalg.norm(off - high * self.up)) <= 20.0:
-                self.holding, self.counts = (name, off), self.BRICK_COUNTS
+                self.holding, self.counts = (name, off), int(round(10.0 * self.widths[name])) if name in self.widths else self.BRICK_COUNTS
                 return self.counts
         self.counts = int(counts)
         return self.counts

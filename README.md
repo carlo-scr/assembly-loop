@@ -9,7 +9,7 @@ grip of a Quest controller.
 Today it moves wooden blocks between places taught by hand and stacks them into a tower. Press-fit bricks and cables
 are meant to follow on the same base.
 
-> **Status, 21 November 2026.** Everything here is tested on a stand-in arm (74 tests). On the real right arm, a session,
+> **Status, 21 November 2026.** Everything here is tested on a stand-in arm (77 tests). On the real right arm, a session,
 > the Quest grip and nudging have run; moving blocks, towers and the camera have not. The first session on the arm
 > follows the rungs below, one at a time. The page that fits one screen (the model of the arm, the live pictures) has
 > run on the stand-in arm only: its cameras have not been opened on the rig yet. The older page is kept at `/classic`.
@@ -190,11 +190,28 @@ It needs OpenCV: `pip install -e ".[real,eyes]"` (with uv: `uv pip install -e ".
    camera's view, and press Look. The picture shows what was made out, the order of the tower, and what is left out
    and why.
 5. **Build a tower from what it sees.** Rehearse in the air first. Every block is taken across its short side and put
-   down the way it lay; tall blocks are held near their top.
+   down the way it lay; tall blocks are held near their top. The gripper is turned to each block as the camera sees it
+   lie, by its last joint, before it comes down.
 
-What it does not do yet: blocks of one colour that touch are one patch and are not made out; a lying cylinder is left
-out (it rolls); a block is never turned over; the tower and the travel above it stay under 300 mm; it does not check
-that the jaws have room beside a block (the lowering is watched for contact, as always). `python -m assemblyloop look`
+**Checked by the camera after every block** (the tick box "check every block", on unless you untick it; towers and
+designs alike). After each put-down the arm goes up and moves above the taught spot that shows farthest from the
+build in the picture, and the camera takes one picture:
+
+- Every block put down so far is looked for where it should be. One that is not there, or more than 8 mm or 12°
+  off, stops the job; the arm stays armed and the log says which block and by how much. If the first picture
+  disagrees, a second one is taken from another place first, in case the arm was in the way.
+- The same picture is looked at as a whole, and the next block is taken where it lies now and turned as it lies now
+  (it may have been pushed), if it is within 30 mm of where it was seen before.
+- When the jaws close, they must close to the width of the block meant, within 10 mm. Another block, or the right one
+  taken the wrong way round, stops the job.
+
+Every such picture is kept in the session's folder under `assembly_logs/<session>/pictures/`, with a line in
+`moves.jsonl` that says what was checked and found. No picture is taken while the arm moves, and pictures never steer
+the arm while it moves: each one changes only where the next move goes. This costs a few seconds per block.
+
+What it does not do yet: blocks of one colour that touch are one patch and are not made out on the mat (on the build
+they are checked one by one, since where each should be is known); a lying cylinder is left out (it rolls); a block is
+never turned over; the tower and the travel above it stay under 300 mm; the wrist cameras are not used. `python -m assemblyloop look`
 takes one picture and writes `look.jpg` with what the camera makes out, without any arm.
 
 ## Layout

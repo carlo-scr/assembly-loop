@@ -31,7 +31,7 @@ from .cycle import NothingHeld, Params, execute
 from .deadman import Deadman, QuestDeadman
 from .feeds import TABLE_CAMERA, MadeUp, same_device
 from .guard import Blocked, Guard, Limits, Refused, Released
-from .sight import Sight
+from .sight import NotAsPlanned, Sight
 from .spots import Spots, demo_spots, plan_move, tool_axis
 
 JOG = dict(up=(0, 0, 1), down=(0, 0, -1), fwd=(1, 0, 0), back=(-1, 0, 0), left=(0, 1, 0), right=(0, -1, 0))  # in (forward, left, up)
@@ -598,8 +598,10 @@ class Session(Sight):
                 leg = legs[k] if legs else dict(src=at, su=0.0, du=0.0, dst=job["fixed"] if job["fixed"] is not None and k == 0 else str(rng.choice([n for n in sorted(sp.at) if n != at])))
                 at, dst = leg["src"], leg["dst"]
                 text = leg.get("text") or f"{at} to {dst}"
+                if leg.get("prepare"):  # a camera job: the block is taken where the newest picture shows it
+                    leg["prepare"]()
                 here = g.where()
-                steps = plan_move(sp, at, dst, here, self.P, rehearse=job["rehearse"], src_up=leg["su"], dst_up=leg["du"], release_counts=leg.get("release"))
+                steps = plan_move(sp, at, dst, here, self.P, rehearse=job["rehearse"], src_up=leg["su"], dst_up=leg["du"], release_counts=leg.get("release"), grip_mm=leg.get("width"))
                 top = float(here @ sp.up) + 1.0  # the arm may start above the travel height (after a tower): it comes down first
                 g.lim = sp.limits(floor_w=min(float(here @ sp.up), sp.travel_w()) - 1.0, ceil_w=top, **self.limit_kw) if job["rehearse"] else sp.limits(ceil_w=top, **self.limit_kw)
                 with self.lock:
@@ -629,6 +631,9 @@ class Session(Sight):
                 job["finish"]()
         except NothingHeld as e:
             outcome = f"{e}. Say where " + ("the blocks are" if legs else "the thing is")
+            lost()
+        except NotAsPlanned as e:  # the arm is fine; what was built is not as planned
+            outcome = f"the camera: {e}. Look at the build before going on"
             lost()
         except Released as e:
             outcome = f"stopped: {e}"

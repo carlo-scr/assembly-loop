@@ -13,12 +13,24 @@
                is put down where the design says, turned as it says, step by step in the design's order. Nothing is
                built unless `design.check` finds every step buildable and standing.
 
+Between the blocks of a tower or a design the camera looks again (`check=True`, the default):
+  - after every put-down the arm steps out of the camera's way and one picture checks every block put down so far
+    (`eyes.find_placed`): one that is not there, or more than OFF_MM / TURN_DEG off, stops the job (NotAsPlanned).
+    If the first picture disagrees, a second one is taken from another place first: the arm may have hidden it;
+  - the same picture is looked at as a whole (`look`), and the next block is taken where it lies NOW, turned as it
+    lies now (it may have been pushed);
+  - the jaws must close to the width of the block meant (`cycle.WrongGrip`): another block, or the right one taken
+    the wrong way round, stops the job.
+Every such picture is kept in the session's log folder, `pictures/`, with a line in moves.jsonl saying what was
+checked and found. No picture is taken while the arm moves; the arm is never steered by a picture as it moves.
+
 The camera never widens where the arm may go: blocks outside the part of the table it was shown are left where they
 are, and the guard's box is the one around the taught spots and those blocks.
 """
 from __future__ import annotations
 
 import copy
+import json
 import threading
 import time
 from pathlib import Path
@@ -28,6 +40,12 @@ import numpy as np
 from .arms import matrix_rpy, rpy_matrix, twist_deg
 from .blocks import Catalogue, plan_tower
 from .guard import Refused
+
+OFF_MM, TURN_DEG, FIT, VISIBLE = 8.0, 12.0, 0.45, 0.3  # a block counts as in place within these; below FIT it is not there; less VISIBLE is not judged
+
+
+class NotAsPlanned(RuntimeError):
+    """The camera saw a block that is not where it was put, or one that moved. The arm is fine and stays armed."""
 
 
 def spin(rpy_deg, up, deg):
@@ -89,11 +107,14 @@ class Sight:
         with self.lock:
             if self.worker is not None:
                 raise Refused("look when the arm has finished")
-            eyes, cat = self._eyes(), self.catalogue()
+            self._eyes(), self.catalogue()  # both must be there (each says what is missing)
             if self.setup is None:
                 raise Refused("the camera has not been shown the table yet")
-            setup = self.setup
-        im = self._grab()
+        return self._look_at(self._grab())
+
+    def _look_at(self, im):
+        """What is in this picture, kept for the page and for the next job."""
+        eyes, cat, setup = self._eyes(), self.catalogue(), self.setup
         tall = max(r.height for k in cat.kinds for r in k.rests())
         seen, unknown, blobs = eyes.look(im, setup.camera, setup.table, cat, setup.region((im.shape[1], im.shape[0]), tall))
         outside = [s for s in seen if not setup.inside(s.uv)]
@@ -194,7 +215,82 @@ class Sight:
             self.worker.start()
 
     # ------------------------------------------------------------------ a tower from what the camera sees
-    def build_seen(self, on, rehearse=False, step=False):
+    # ------------------------------------------------------------------ the camera between the blocks of a job
+    def _watch(self, job, at):
+        """Give every leg of a camera job its look before the pick and its check after the put-down (see the top)."""
+        for k, leg in enumerate(job["legs"]):
+            leg["prepare"] = lambda k=k: self._relocate(job, k)
+            leg["then"] = lambda k=k: self._check_built(job, k, at)
+
+    def _relocate(self, job, k):
+        """Before the pick of leg k: take the block where the newest picture shows it."""
+        if job["rehearse"] or not job.get("watch"):
+            return
+        leg, sp, setup = job["legs"][k], job["spots"], self.setup
+        src = leg["source"]
+        near = [b for b in job.get("last_seen") or [] if b.kind.name == src["kind"].name and b.rest.name == src["rest"].name
+                and float(np.hypot(*(np.asarray(b.uv) - src["uv"]))) <= 30.0]
+        if self.sight is not None:
+            self.sight["stale"] = True  # the arm is about to change what is there
+        if not near:
+            if job.get("checked"):
+                self.say(f"the {src['name']} is not in the newest picture (hidden by the arm?): it is taken where it was seen before")
+            return
+        b = min(near, key=lambda b: float(np.hypot(*(np.asarray(b.uv) - src["uv"]))))
+        d = float(np.hypot(*(np.asarray(b.uv) - src["uv"])))
+        t = b.rest.turns
+        turn = 0.0 if not t else (b.angle - setup.angle_ref + t / 2.0) % t - t / 2.0
+        sp.at[leg["src"]], sp.rot[leg["src"]] = setup.table.point(b.uv[0], b.uv[1], setup.w_grasp), spin(setup.rpy_ref, sp.up, turn)
+        if d > 1.0:
+            self.say(f"the {src['name']} lies {d:.0f} mm from where it was seen before: it is taken where it lies now")
+        src["uv"] = np.asarray(b.uv, float)
+
+    def _aside(self, at):
+        """Places above the taught spots, best first for the camera: where the arm shows farthest from the build."""
+        setup, sp = self.setup, self.spots
+        cam = setup.camera
+        mid = cam.project([np.asarray(at, float)])[0]
+        return sorted(sp.at, key=lambda n: -float(np.linalg.norm(cam.project([sp.above(sp.grasp(n))])[0] - mid)))
+
+    def _check_built(self, job, k, at):
+        """After the put-down of leg k: out of the camera's way, one picture, every block put down so far checked."""
+        if job["rehearse"] or not job.get("watch"):
+            return
+        eyes, setup, g, sp = self._eyes(), self.setup, self.guard, job["spots"]
+        placed, tries = job["expect"][:k + 1], self._aside(at)[:2]
+        for i, far in enumerate(tries):
+            g.move_to(sp.above(g.where()), self.P.lift, "up to the travel height")
+            g.move_to(sp.above(self.spots.grasp(far)), self.P.travel, "out of the camera's way")
+            im = self._grab()
+            rows, bad = [], []
+            for j, p in enumerate(placed):
+                r = eyes.find_placed(im, setup.camera, setup.table, placed, j)
+                if r is None:
+                    continue
+                rows.append(dict(step=j + 1, name=p["name"], fit=round(r["fit"], 2), off_mm=round(r["off_mm"], 1), turn_deg=round(r["turn_deg"], 1), visible=round(r["visible"], 2)))
+                if r["visible"] < VISIBLE:
+                    continue
+                if r["fit"] < FIT:
+                    bad.append(f"the {p['name']} (step {j + 1}) is not where it was put")
+                elif r["off_mm"] > OFF_MM or abs(r["turn_deg"]) > TURN_DEG:
+                    bad.append(f"the {p['name']} (step {j + 1}) is {r['off_mm']:.0f} mm and {abs(r['turn_deg']):.0f} degrees off where it should be")
+            if not bad or i == len(tries) - 1:
+                break
+            self.say(f"the camera does not agree ({'; '.join(bad)}): looking again from another place, in case the arm was in the way")
+        self._look_at(im)
+        job["last_seen"], job["checked"] = list(self.sight["seen"]), True
+        folder = self.log_dir / "pictures"
+        folder.mkdir(parents=True, exist_ok=True)
+        f = folder / f"{time.strftime('%H%M%S')}_step{k + 1}.jpg"
+        small = im if im.shape[1] <= 1920 else eyes.cv2.resize(im, (1920, int(round(im.shape[0] * 1920 / im.shape[1]))), interpolation=eyes.cv2.INTER_AREA)
+        eyes.cv2.imwrite(str(f), small, [eyes.cv2.IMWRITE_JPEG_QUALITY, 85])
+        with open(self.log_dir / "moves.jsonl", "a") as fh:
+            fh.write(json.dumps(dict(t=time.time(), check=k + 1, job=job.get("what"), picture=f.name, arm=g.where().round(1).tolist(), blocks=rows, problems=bad), default=float) + "\n")
+        self.say(f"the camera checked step {k + 1}: " + ("every block is where it should be" if not bad else "; ".join(bad)))
+        if bad:
+            raise NotAsPlanned("; ".join(bad))
+
+    def build_seen(self, on, rehearse=False, step=False, check=True):
         """A tower on the taught spot `on` from the blocks of the last look, widest first."""
         with self.lock:
             if self.phase() != "ARMED":
@@ -215,21 +311,25 @@ class Sight:
             levels, _ = plan_tower(free, cat, max_mm=self._tower_max())
             if not levels:
                 raise Refused("the camera sees no block that can go onto a tower")
-            sp, legs = copy.deepcopy(self.spots), []
+            sp, legs, expect = copy.deepcopy(self.spots), [], []
+            turn_on = -twist_deg(rpy_matrix(setup.rpy_ref), rpy_matrix(self.spots.turn(on)))[0]  # how the gripper is turned at `on`, about up, from rpy_ref
             for k, lv in enumerate(levels):
                 b = lv["block"]
                 name = b.name if b.name not in self.spots.at else b.name + " (seen)"
                 t = b.rest.turns
                 turn = 0.0 if not t else (b.angle - setup.angle_ref + t / 2.0) % t - t / 2.0  # the shorter way round: a bar is the same turned by 180
                 sp.at[name], sp.rot[name] = table.point(b.uv[0], b.uv[1], setup.w_grasp), spin(setup.rpy_ref, up, turn)
-                legs.append(dict(src=name, dst=on, su=lv["hold_mm"], du=lv["base_mm"] + lv["hold_mm"] + (self.P.drop_mm if k else 0.0),
-                                 text=f"{b.name} onto {on}, level {k + 1} of {len(levels)}"))
+                legs.append(dict(src=name, dst=on, su=lv["hold_mm"], du=lv["base_mm"] + lv["hold_mm"] + (self.P.drop_mm if k else 0.0), width=b.rest.short,
+                                 source=dict(name=b.name, kind=b.kind, rest=b.rest, uv=np.asarray(b.uv, float)), text=f"{b.name} onto {on}, level {k + 1} of {len(levels)}"))
+                expect.append(dict(name=b.name, kind=b.kind, rest=b.rest, uv=tuple(base), angle=setup.angle_ref + turn_on, z=lv["base_mm"]))
             sp.extra = levels[-1]["top_mm"] + max(lv["hold_mm"] for lv in levels)  # a carried block clears the finished tower, however low it hangs
             self.stack, self.thing_at = dict(on=on, block_mm=None, n=0, of=len(levels), feeds=[leg["src"] for leg in legs]), None
             s["stale"] = True
             self.job = dict(steps=[], i=None, waiting=False, outcome=None, done=0, total=len(legs), src=legs[0]["src"], dst=on, rehearse=bool(rehearse), step=bool(step),
-                            fixed=None, kind="move", legs=legs, spots=sp, text=legs[0]["text"], tower=True)
-            self.say(f"a tower of {len(levels)} on {on}, {levels[-1]['top_mm']:.0f} mm high: " + ", ".join(lv["block"].name for lv in levels))
+                            fixed=None, kind="move", legs=legs, spots=sp, text=legs[0]["text"], tower=True, watch=bool(check), expect=expect, last_seen=list(s["seen"]), what=f"tower on {on}")
+            self._watch(self.job, table.point(base[0], base[1], setup.w_grasp))
+            self.say(f"a tower of {len(levels)} on {on}, {levels[-1]['top_mm']:.0f} mm high: " + ", ".join(lv["block"].name for lv in levels)
+                     + (", checked by the camera after every block" if check and not rehearse else ""))
             self._next.clear()
             self.worker = threading.Thread(target=self._work, daemon=True)
             self.worker.start()
@@ -277,7 +377,7 @@ class Sight:
         return D.find_order(D.Design.from_dict(d), cat).to_dict()
 
     # ------------------------------------------------------------------ build a design from what the camera sees
-    def build_design(self, name, on, rehearse=False, step=False):
+    def build_design(self, name, on, rehearse=False, step=False, check=True):
         """The saved design `name`, built on the taught spot `on` from the blocks of the last look."""
         from . import design as D
 
@@ -314,7 +414,7 @@ class Sight:
                 there = D.circle(q[0], q[1], b.rest.long) if b.rest.round else D.rect(q[0], q[1], b.rest.long, b.rest.short, deg)
                 if any(D.gap(there, p.poly) < D.CLEAR_MM for p in parts):
                     raise Refused(f"the {b.name} lies where the design goes on {on}, or within {D.CLEAR_MM:.0f} mm of it: move it away, then Look again")
-            pool, legs, plan, missing = sorted(s["seen"], key=lambda b: float(np.linalg.norm(np.asarray(b.uv) - base))), [], [], {}
+            pool, legs, plan, missing, expect = sorted(s["seen"], key=lambda b: float(np.linalg.norm(np.asarray(b.uv) - base))), [], [], {}, []
             sp = copy.deepcopy(self.spots)
             for k, p in enumerate(parts):
                 b = next((b for b in pool if b.kind.name == p.kind.name and b.rest.name == p.rest.name), None)
@@ -328,8 +428,10 @@ class Sight:
                 turn_dst = (ang(rep["blocks"][k]["grip_deg"]) - setup.angle_ref + 90.0) % 180.0 - 90.0  # the gripper is the same turned by half a turn
                 sp.at[src], sp.rot[src] = table.point(b.uv[0], b.uv[1], setup.w_grasp), spin(setup.rpy_ref, up, turn_src)
                 sp.at[dst], sp.rot[dst] = table.point(*uv(p.block.x, p.block.y), setup.w_grasp), spin(setup.rpy_ref, up, turn_dst)
-                legs.append(dict(src=src, dst=dst, su=p.hold, du=p.z + p.hold + (self.P.drop_mm if p.z > D.TOUCH_MM else 0.0), adds=True,
-                                 release=int(round(10.0 * rep["blocks"][k]["release_mm"])), text=f"{b.name} to step {k + 1} of {len(parts)}"))
+                legs.append(dict(src=src, dst=dst, su=p.hold, du=p.z + p.hold + (self.P.drop_mm if p.z > D.TOUCH_MM else 0.0), adds=True, width=b.rest.short,
+                                 release=int(round(10.0 * rep["blocks"][k]["release_mm"])), source=dict(name=b.name, kind=b.kind, rest=b.rest, uv=np.asarray(b.uv, float)),
+                                 text=f"{b.name} to step {k + 1} of {len(parts)}"))
+                expect.append(dict(name=b.name, kind=p.kind, rest=p.rest, uv=tuple(uv(p.block.x, p.block.y)), angle=ang(p.block.angle), z=p.z))
                 a = np.radians(ang(p.block.angle))
                 plan.append(dict(name=p.kind.name, xyz=[round(float(v), 1) for v in sp.at[dst]], base=round(p.z, 1), along=[float(v) for v in table.axes @ np.array([np.cos(a), np.sin(a), 0.0])],
                                  size=[p.rest.long, p.rest.short, p.rest.height], round=bool(p.rest.round), colour=p.kind.colour))
@@ -339,10 +441,12 @@ class Sight:
             self.stack, self.thing_at = dict(on=on, block_mm=None, n=0, of=len(legs), feeds=[leg["src"] for leg in legs], design=dz.name), None
             s["stale"] = True
             self.job = dict(steps=[], i=None, waiting=False, outcome=None, done=0, total=len(legs), src=legs[0]["src"], dst=legs[0]["dst"], rehearse=bool(rehearse), step=bool(step),
-                            fixed=None, kind="move", legs=legs, spots=sp, text=legs[0]["text"], tower=True, plan=plan)
+                            fixed=None, kind="move", legs=legs, spots=sp, text=legs[0]["text"], tower=True, plan=plan, watch=bool(check), expect=expect,
+                            last_seen=list(s["seen"]), what=f"design {dz.name!r} on {on}")
+            self._watch(self.job, table.point(base[0], base[1], setup.w_grasp))
             low = rep["tilt_deg"]
             self.say(f"building the design {dz.name!r} on {on}: {len(legs)} blocks, {rep['height_mm']:.0f} mm high, holds a tilt of {low:.0f} degrees"
-                     + (" (SHAKY: a bump may topple it)" if low < D.SHAKY_DEG else ""))
+                     + (" (SHAKY: a bump may topple it)" if low < D.SHAKY_DEG else "") + (", checked by the camera after every block" if check and not rehearse else ""))
             self._next.clear()
             self.worker = threading.Thread(target=self._work, daemon=True)
             self.worker.start()

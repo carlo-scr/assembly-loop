@@ -20,6 +20,11 @@ class NothingHeld(RuntimeError):
     """The jaws closed on nothing. The arm was lifted clear with the gripper open."""
 
 
+class WrongGrip(NothingHeld):
+    """The jaws closed on something of another width than the block meant (another block, or the right one taken
+    the wrong way round). The arm was lifted clear with the gripper open."""
+
+
 @dataclass
 class Params:
     travel: float = 100.0  # across, at the travel height, with nothing near
@@ -39,6 +44,7 @@ class Params:
     pull_stall_mm: float = 4.0  # pulling a brick off its studs is allowed a little more, then it counts as stuck
     drop_mm: float = 2.0  # on a tower a block is let go this far above where it should rest, so that nothing is pressed
     rest_ok_mm: float = 6.0  # a put-down that meets something this close to its target counts as put down
+    grip_tol_mm: float = 10.0  # the jaws must close to within this of the width of the block meant (when it is known)
 
     def check(self):
         if not (0 < self.press <= self.slow <= self.lift <= self.travel <= 120.0):
@@ -135,6 +141,11 @@ def execute(guard, steps, P=None, air=False, before=None, after=None):
                     guard.grip(P.open_counts, "open again: nothing was held")
                     guard.move_to(hover, P.slow, "lift clear: nothing was held")
                     raise NothingHeld(f"the jaws closed to {got} counts: no brick")
+                want = s.get("expect_mm")
+                if s.get("must_hold") and not air and want and abs(got / 10.0 - want) > P.grip_tol_mm:
+                    guard.grip(P.open_counts, "open again: not what was meant")
+                    guard.move_to(hover, P.slow, "lift clear: not what was meant")
+                    raise WrongGrip(f"the jaws closed to {got / 10.0:.0f} mm, but the block is {want:.0f} mm across: another block, or turned the wrong way")
             elif s["kind"] == "read":
                 out["reads"][s["name"]] = guard.read(s["name"])
         finally:
