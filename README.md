@@ -9,7 +9,7 @@ grip of a Quest controller.
 Today it moves wooden blocks between places taught by hand and stacks them into a tower. Press-fit bricks and cables
 are meant to follow on the same base.
 
-> **Status, 19 November 2026.** Everything here is tested on a stand-in arm (50 tests). On the real right arm, a session,
+> **Status, 19 November 2026.** Everything here is tested on a stand-in arm (52 tests). On the real right arm, a session,
 > the Quest grip and nudging have run; moving blocks, towers and the camera have not. The first session on the arm
 > follows the rungs below, one at a time.
 
@@ -44,6 +44,8 @@ Then open `http://127.0.0.1:8777/` in a browser on the same machine.
 
 - **Teleoperation must be closed first.** Both listen for the Quest on port 6666.
 - **Without a robot,** choose "Stand-in arm" on the page. The space bar stands in for the grip.
+- **Without the Quest:** `python -m assemblyloop dashboard --key_hold` lets the space bar of the page be the
+  hold-to-run switch of a real arm. It counts only while the page is in front and has the keyboard.
 - **The arms are mounted at 45 degrees,** rolled about their forward axis like shoulders. "Straight down" on the page
   takes that into account. On another rig: `--mount_deg 0` for an upright arm.
 - **Other arm addresses:** `python -m assemblyloop dashboard --right 192.168.1.199 --left 192.168.1.219`

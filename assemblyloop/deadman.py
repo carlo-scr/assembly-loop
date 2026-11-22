@@ -41,10 +41,13 @@ class Deadman:
         self._last_press = None  # when a counted "pressed" last arrived
         self._armed = False  # a release has been seen since the signal (re)appeared
         self.n = 0
+        self._gaps = []  # (when, how long since the signal before): the last few seconds, for the page
 
     def feed(self, pressed, t=None):
         t = self.clock() if t is None else t
         with self._lock:
+            if self._last_any is not None:
+                self._gaps = [(a, d) for a, d in self._gaps if t - a <= 5.0] + [(t, t - self._last_any)]
             if self._last_any is None or t - self._last_any > self.timeout_s:
                 self._armed, self._last_press = False, None  # the signal was gone: start over
             self._last_any = t
@@ -53,6 +56,11 @@ class Deadman:
                 self._armed, self._last_press = True, None
             elif self._armed:
                 self._last_press = t
+
+    def worst_gap(self):
+        """The longest silence between two signals in the last five seconds [s]."""
+        with self._lock:
+            return max((d for _, d in self._gaps), default=0.0)
 
     def held(self):
         t = self.clock()

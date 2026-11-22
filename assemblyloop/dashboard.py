@@ -37,7 +37,7 @@ header{padding:14px 20px 12px;border-bottom:1px solid var(--line);background:var
 h2{font-size:13px;margin:0 0 10px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--mute)}
 h3{font-size:15px;margin:14px 0 0;font-weight:600}
 #phase{font-size:22px;font-weight:700;padding:6px 16px;border-radius:999px;border:2px solid currentColor;letter-spacing:.03em}
-#hint{flex:1;min-width:220px;font-size:16px}
+#hint{flex:1;min-width:220px;font-size:16px;height:2.9em;overflow:hidden}
 #ladder{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;font-size:12.5px;font-weight:600;letter-spacing:.03em}
 #ladder span{padding:3px 10px;border-radius:999px;border:1px solid var(--line);color:var(--mute)}#ladder span.on{color:var(--card);background:var(--ink);border-color:var(--ink)}
 button{font:inherit;font-weight:600;border:1px solid var(--line);background:var(--btn);color:var(--ink);padding:9px 16px;border-radius:8px;cursor:pointer}
@@ -59,7 +59,7 @@ ol{margin:10px 0 0;padding-left:22px;columns:2;column-gap:28px}ol li{display:lis
 .pad{display:grid;grid-template-columns:repeat(3,minmax(84px,1fr)) minmax(84px,1fr);gap:6px;max-width:520px;margin:8px 0}.pad button:nth-child(4n){margin-left:18px}.pad button{padding:12px 6px}.pad i,button[data-t] i{font-style:normal;color:var(--mute);font-weight:400;margin-left:6px}
 pre{margin:0;font:12.5px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap;max-height:230px;overflow:auto;color:var(--mute)}
 #e_img{width:100%;border-radius:8px;margin-top:10px;border:1px solid var(--line)}
-#msg{color:var(--no);min-height:1.3em;font-weight:600;margin-top:8px}[hidden]{display:none!important}
+#msg{color:var(--no);height:1.45em;font-weight:600;margin-top:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}[hidden]{display:none!important}
 @media (max-width:700px){ol{columns:1}}
 </style></head><body>
 <header><div class="top"><h1>Assembly loop</h1><div id="phase">…</div><div id="hint"></div>
@@ -95,8 +95,8 @@ pre{margin:0;font:12.5px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap;m
 <div class="note" id="jognote"></div>
 <div class="note">Forward is away from the robot's base. Up and down follow the gripper's own axis, so it should point at the table. Turning spins the gripper in place (only its last joint moves). Every nudge is slow and ends by itself if something is in the way.</div>
 <h3>Find the table by itself</h3>
-<div class="row"><label>Area across (mm)<input type="number" id="ft_w" value="200" min="100" max="400" step="10"></label><label>Area deep (mm)<input type="number" id="ft_d" value="140" min="100" max="400" step="10"></label><button id="ftbtn" class="go">Find the table</button></div>
-<div class="note">Instead of teaching spots by hand. Bring the gripper over the middle of the area the blocks will lie in, pointing straight down. Hold a green or blue bar between the open jaws by its ends, lying level, the jaws across its short side, and press Close gripper. Then press Find the table and hold the grip: the gripper comes straight down slowly until the bar meets the mat, lets go, and the label reads ARMED. Let go of the grip if it visibly pushes into the table. The tower will stand where the bar was put down.</div>
+<div class="row"><label>Area across (mm)<input type="number" id="ft_w" value="200" min="100" max="400" step="10"></label><label>Area deep (mm)<input type="number" id="ft_d" value="140" min="100" max="400" step="10"></label><button id="ftbtn" class="go">Find the table</button><button id="fthere">The gripper is at the table now</button></div>
+<div class="note">Instead of teaching spots by hand. Bring the gripper over the middle of the area the blocks will lie in, pointing straight down. Hold a green or blue bar between the open jaws by its ends, lying level, the jaws across its short side, and press Close gripper. Then press Find the table and hold the grip: the gripper comes straight down slowly until the bar meets the mat, lets go, and the label reads ARMED. Let go of the grip if it visibly pushes into the table. The tower will stand where the bar was put down. If you have already brought the fingertips down onto the mat yourself, press "The gripper is at the table now" instead: nothing comes down, the bar is let go there.</div>
 <h3>Or teach spots by hand</h3>
 <div class="row"><label>Name of this spot<input type="text" id="spotname" value="A" size="6" maxlength="12"></label><button id="spotbtn" class="go">Save spot here</button></div>
 <ul id="spots_edit"></ul>
@@ -162,8 +162,8 @@ function render(s){
   // hold-to-run
   const q=s.quest, h=$("held");
   if(q){ h.textContent=q.held?"GRIP HELD":(q.why==="released"?"grip released":(q.why==="held"?"grip held, not armed":q.why)); h.className="big "+(q.held?"held":"rel");
-    dl($("quest"),[["Switch",s.hold==="page"?"space bar on this page":"Quest controller grip"],["Signal",q.frames? `${q.hz} per second`:"none yet"]].concat(s.hold==="page"?[]:[["Grip value",q.grip==null?"…":Number(q.grip).toFixed(2)]]));
-    $("holdnote").textContent=s.hold==="page"?"Hold the space bar to stand in for the grip (stand-in arm only).":"Squeeze past halfway to hold. The red emergency stop stays in reach.";
+    dl($("quest"),[["Switch",s.hold==="page"?"space bar on this page":"Quest controller grip"],["Signal",q.frames? `${q.hz} per second, longest gap ${q.gap_ms} ms`:"none yet"]].concat(s.hold==="page"?[]:[["Grip value",q.grip==null?"…":Number(q.grip).toFixed(2)]]));
+    $("holdnote").textContent=s.hold==="page"?(s.fake?"Hold the space bar to stand in for the grip.":"Hold the SPACE BAR to let the arm move; let go to pause it. It counts only while this page is in front and has the keyboard. With the space bar held: F closes the gripper, R opens it. The red emergency stop stays in reach."):"Squeeze past halfway to hold. The red emergency stop stays in reach.";
   } else { h.textContent="starts with the session"; h.className="big rel"; $("quest").replaceChildren(); $("holdnote").textContent=""; }
   // calibration
   const c=s.calibration, teachOn=s.phase==="AWAITING CALIBRATION";
@@ -208,25 +208,27 @@ function render(s){
   const a=s.arm; dl($("arm"), a? [["Controller error",a.error==null?"…":(a.error? "ERROR "+a.error:"none")],["Height above the lowest spot",a.height_mm==null?"known once calibrated":f1(a.height_mm)+" mm"],
     ["Measured against planned",a.lag_mm==null?"…":f1(a.lag_mm)+" mm apart"],["Moving",a.moving?"yes":"no"]].concat(a.read_error?[["Read problem",a.read_error]]:[]) : [["Status","no session"]]);
   const lg=$("log"), atEnd=lg.scrollTop+lg.clientHeight>=lg.scrollHeight-8; lg.textContent=s.log.join("\n"); if(atEnd) lg.scrollTop=lg.scrollHeight;
-  window.HOLD=s.connected?s.hold:null; window.PHASE=s.phase;
+  window.HOLD=s.connected?s.hold:null; window.PHASE=s.phase; window.KEYHOLD=!!s.key_hold; window.BUSY=!!c.busy;
 }
-function pickArm(){ const k=(document.querySelector("input[name=arm]:checked")||{}).value; show("questrow",k==="stand-in"); }
+function pickArm(){ const k=(document.querySelector("input[name=arm]:checked")||{}).value; show("questrow",k==="stand-in"||window.KEYHOLD); }
 async function tick(){ try{ render(await (await fetch("/api/state")).json()); }catch(e){ $("phase").textContent="NO ANSWER"; $("hint").textContent="The program is not answering. Assume nothing about the arm."; } }
 setInterval(tick,250); tick();
 $("stop").onclick=()=>post("/api/stop");
-$("startbtn").onclick=()=>{ const k=(document.querySelector("input[name=arm]:checked")||{}).value; post("/api/session",{start:true,arm:k,hold:k==="stand-in"&&!$("usequest").checked?"page":"quest"}); };
+$("startbtn").onclick=()=>{ const k=(document.querySelector("input[name=arm]:checked")||{}).value; post("/api/session",{start:true,arm:k,hold:(k==="stand-in"||window.KEYHOLD)&&!$("usequest").checked?"page":"quest"}); };
 $("endbtn").onclick=()=>post("/api/session",{start:false});
 $("calbtn").onclick=()=>post("/api/calibrate",{do:"begin"}); $("savedbtn").onclick=()=>post("/api/calibrate",{do:"saved"}); $("demobtn").onclick=()=>post("/api/calibrate",{do:"demo"});
 $("donebtn").onclick=()=>post("/api/calibrate",{do:"done"});
-const jog=dir=>post("/api/jog",{dir:dir,mm:+$("jogmm").value});
+let waiting=null;
+const jog=dir=>{ if(window.BUSY){ waiting=()=>jog(dir); return; } window.BUSY=true; return post("/api/jog",{dir:dir,mm:+$("jogmm").value}); };
+setInterval(()=>{ if(waiting&&!window.BUSY&&window.PHASE==="AWAITING CALIBRATION"){ const w=waiting; waiting=null; w(); } },60);
 document.querySelectorAll("button[data-j]").forEach(b=>{ b.onclick=()=>jog(b.dataset.j); });
-const turn=dir=>post("/api/turn",{dir:dir,deg:+$("jogdeg").value});
+const turn=dir=>{ if(window.BUSY){ waiting=()=>turn(dir); return; } window.BUSY=true; return post("/api/turn",{dir:dir,deg:+$("jogdeg").value}); };
 document.querySelectorAll("button[data-t]").forEach(b=>{ b.onclick=()=>turn(b.dataset.t); });
-$("levelbtn").onclick=()=>post("/api/level"); $("ftbtn").onclick=()=>post("/api/find_table",{wide:+$("ft_w").value,deep:+$("ft_d").value}); $("gopen").onclick=()=>post("/api/grip",{close:false}); $("gclose").onclick=()=>post("/api/grip",{close:true});
+$("levelbtn").onclick=()=>post("/api/level"); $("ftbtn").onclick=()=>post("/api/find_table",{wide:+$("ft_w").value,deep:+$("ft_d").value}); $("fthere").onclick=()=>post("/api/find_table",{wide:+$("ft_w").value,deep:+$("ft_d").value,here:true}); $("gopen").onclick=()=>post("/api/grip",{close:false}); $("gclose").onclick=()=>post("/api/grip",{close:true});
 // the lab's own nudge keys: W/S away from and towards the base, A/D left and right, Q/E up and down
 const KEYS={KeyW:"fwd",KeyS:"back",KeyA:"left",KeyD:"right",KeyQ:"up",KeyE:"down"};
 const TURN={KeyZ:"ccw",KeyC:"cw"};
-addEventListener("keydown",e=>{ if(!(KEYS[e.code]||TURN[e.code])||window.PHASE!=="AWAITING CALIBRATION"||e.repeat||e.metaKey||e.ctrlKey||["INPUT","SELECT","TEXTAREA"].includes(e.target.tagName)) return; e.preventDefault(); KEYS[e.code]? jog(KEYS[e.code]) : turn(TURN[e.code]); });
+addEventListener("keydown",e=>{ if(!(KEYS[e.code]||TURN[e.code])||window.PHASE!=="AWAITING CALIBRATION"||e.repeat||e.metaKey||e.ctrlKey||e.target.tagName==="TEXTAREA"||(e.target.tagName==="INPUT"&&["text","number"].includes(e.target.type))) return; e.preventDefault(); KEYS[e.code]? jog(KEYS[e.code]) : turn(TURN[e.code]); });
 $("spotbtn").onclick=()=>post("/api/spot",{name:$("spotname").value}); $("lift").onchange=()=>post("/api/lift",{mm:+$("lift").value});
 $("armbtn").onclick=()=>post("/api/arm",{on:true}); $("disbtn").onclick=()=>post("/api/arm",{on:false});
 $("thing").onchange=()=>{ if($("thing").value) post("/api/thing",{spot:$("thing").value}); };
@@ -238,10 +240,19 @@ $("e_build").onclick=()=>post("/api/build_seen",{on:$("e_on").value,rehearse:$("
 $("tw_build").onclick=()=>tower("build"); $("tw_down").onclick=()=>tower("down"); $("tw_loop").onclick=()=>tower("loop");
 // With the stand-in arm the space bar stands in for the grip. Like the headset, the page reports its state ALL the time
 // (pressed or not), so that a closed or frozen page reads as "no signal", not as "released and fine".
-let down=false; const typing=e=>["INPUT","SELECT","TEXTAREA","BUTTON"].includes(e.target.tagName);
-setInterval(()=>{ if(window.HOLD==="page") fetch("/api/hold",{method:"POST",headers:{"Content-Type":"application/json","X-Token":TOKEN},body:JSON.stringify({pressed:down})}).catch(()=>{}); },80);
-addEventListener("keydown",e=>{ if(e.code!=="Space"||window.HOLD!=="page"||typing(e)) return; e.preventDefault(); down=true; });
-addEventListener("keyup",e=>{ if(e.code==="Space") down=false; }); addEventListener("blur",()=>{ down=false; });
+// A button or a tick box that was just clicked keeps the keyboard, and the space bar would press it again: it is let go of, so that the space bar is only ever the switch.
+let down=false; const typing=e=>e.target.tagName==="TEXTAREA"||(e.target.tagName==="INPUT"&&["text","number"].includes(e.target.type));
+addEventListener("change",e=>{ if(e.target.tagName==="SELECT"||(e.target.tagName==="INPUT"&&e.target.type==="number")) e.target.blur(); });
+addEventListener("keydown",e=>{ if(e.code==="Enter"&&e.target.tagName==="INPUT") e.target.blur(); });
+addEventListener("click",e=>{ const b=e.target.closest&&e.target.closest("button,input[type=checkbox],input[type=radio]"); if(b) b.blur(); });
+const tell=()=>{ if(window.HOLD==="page") fetch("/api/hold",{method:"POST",headers:{"Content-Type":"application/json","X-Token":TOKEN},body:JSON.stringify({pressed:down}),keepalive:true}).catch(()=>{}); };
+setInterval(tell,50);
+addEventListener("keydown",e=>{ if(e.code!=="Space"||window.HOLD!=="page"||typing(e)) return; e.preventDefault(); if(document.activeElement&&document.activeElement!==document.body) document.activeElement.blur(); down=true; });
+addEventListener("keydown",e=>{ if(!["KeyF","KeyR"].includes(e.code)||window.PHASE!=="AWAITING CALIBRATION"||e.repeat||e.metaKey||e.ctrlKey||typing(e)) return; e.preventDefault(); post("/api/grip",{close:e.code==="KeyF"}); });
+let upTimer=null;
+addEventListener("keydown",e=>{ if(e.code==="Space"&&upTimer){ clearTimeout(upTimer); upTimer=null; } },true);
+addEventListener("keyup",e=>{ if(e.code!=="Space") return; if(window.HOLD==="page"&&!typing(e)) e.preventDefault();
+  clearTimeout(upTimer); upTimer=setTimeout(()=>{ upTimer=null; down=false; tell(); },40); }); addEventListener("blur",()=>{ down=false; tell(); });
 </script></body></html>
 """
 
@@ -264,7 +275,7 @@ def make_server(session, port=8777):
         elif path == "/api/level":
             session.level()
         elif path == "/api/find_table":
-            session.find_table(b.get("wide", 200), b.get("deep", 140))
+            session.find_table(b.get("wide", 200), b.get("deep", 140), bool(b.get("here")))
         elif path == "/api/grip":
             session.grip(bool(b.get("close")))
         elif path == "/api/spot":
@@ -296,6 +307,8 @@ def make_server(session, port=8777):
         return True
 
     class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"  # connections are kept open: the page reports its key twenty times a second
+
         def log_message(self, *a):  # quiet: the page polls four times a second
             pass
 
@@ -323,11 +336,14 @@ def make_server(session, port=8777):
             return self._send(dict(error="not found"), HTTPStatus.NOT_FOUND)
 
         def do_POST(self):
+            try:  # the body is read whatever happens next: the connection stays open for the next request
+                raw = self.rfile.read(min(int(self.headers.get("Content-Length") or 0), 1 << 20))
+            except ValueError:
+                raw = b""
             if not self._local() or not secrets.compare_digest(self.headers.get("X-Token") or "", token):
                 return self._send(dict(error="refused: this button was not pressed on the dashboard's own page"), HTTPStatus.FORBIDDEN)
             try:
-                n = int(self.headers.get("Content-Length") or 0)
-                body = json.loads(self.rfile.read(n) or b"{}") if n else {}
+                body = json.loads(raw or b"{}")
                 if not isinstance(body, dict):
                     raise ValueError("the request is not an object")
                 if not act(self.path, body):
@@ -336,6 +352,9 @@ def make_server(session, port=8777):
                 return self._send(dict(error=f"{e}"), HTTPStatus.CONFLICT)
             return self._send(dict(ok=True))
 
-    server = ThreadingHTTPServer(("127.0.0.1", int(port)), Handler)
+    class Server(ThreadingHTTPServer):
+        request_queue_size, daemon_threads = 128, True  # the default of 5 waiting connections drops some when the page is busy
+
+    server = Server(("127.0.0.1", int(port)), Handler)
     server.token = token
     return server

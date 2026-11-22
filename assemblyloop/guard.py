@@ -176,9 +176,10 @@ class Guard:
             self._fail(str(e))
         self.note("recover")
 
-    def move_to(self, target, speed, what="", stall_mm=None):
+    def move_to(self, target, speed, what="", stall_mm=None, inch_mm=None):
         """Straight to `target` (base frame, mm) at the taught orientation, in segments of at most `max_step_mm`.
-        With `stall_mm` the move is watched: it stops (Blocked) once the measured arm is that far behind the plan."""
+        With `stall_mm` the move is watched: it stops (Blocked) once the measured arm is that far behind the plan.
+        A watched move goes in pieces of `inch_mm` (the limits' own, 3 mm, unless given) and is checked after each."""
         self._alive()
         target = np.asarray(target, float)
         if speed > self.lim.max_speed_mm_s + 1e-9 or speed <= 0:
@@ -202,7 +203,8 @@ class Guard:
             return
         if length < 1e-3:
             return
-        n, u, worst = max(int(np.ceil(length / self.lim.inch_mm - 1e-9)), 1), (target - start) / length, 0.0
+        inch = float(np.clip(self.lim.inch_mm if inch_mm is None else inch_mm, 1.0, self.lim.max_step_mm))
+        n, u, worst = max(int(np.ceil(length / inch - 1e-9)), 1), (target - start) / length, 0.0
         for i in range(n):
             self._segment(start + (target - start) * (i + 1) / n, speed, what)
             self.sleep(self.lim.settle_s)

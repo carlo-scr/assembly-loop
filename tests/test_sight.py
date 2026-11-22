@@ -255,3 +255,28 @@ def test_coloured_things_that_never_move_do_not_confuse_the_camera(ses):
     ses.show_table("green bar")
     assert until(lambda: ses.worker is None, 120) and ses.job["outcome"] == "done", (ses.job["outcome"], list(ses.lines)[-3:])
     assert ses.setup.fit_mm < 2.0
+
+
+def test_a_gripper_brought_to_the_table_by_hand_is_taken_as_the_table(tmp_path):
+    s = Session({"stand-in": dict(label="Stand-in arm (no robot)", ip=None, make=FakeArm)}, spots_path=tmp_path / "spots.json", log_dir=tmp_path / "logs", probe=lambda ip: False,
+                fake_speed=40.0, guard_kw=dict(poll_s=0.002), limit_kw=dict(settle_s=0.0), camera_path=tmp_path / "camera.json", blocks_path=tmp_path / "blocks.json")
+    alive = [True]
+    threading.Thread(target=lambda: [(s.dm and s.dm.feed(True if s.gate and s.gate.armed else False), time.sleep(0.02)) for _ in iter(lambda: alive[0], False)], daemon=True).start()
+    try:
+        s.start("stand-in")
+        a = s.arm
+        a.p = a.plan = np.array([460.0, 0.0, 120.0])  # the fingertips touch the table here
+        a.blocked = lambda p: p[2] < 120.0
+        a.bricks = {"thing": a.p.copy()}
+        assert until(lambda: all(c["ok"] for c in s.state()["checks"]), 6)
+        s.arm_on()
+        s.dm.feed(False)
+        s.find_table(200.0, 140.0, here=True)
+        assert until(lambda: s.worker is None, 30), s.state()["calibration"]
+        assert s.phase() == "ARMED" and s.thing_at == "T" and "where the gripper was" in s.note, (s.phase(), s.note)
+        assert np.allclose(s.spots.grasp("T"), [460.0, 0.0, 121.5], atol=0.05) and a.holding is None
+        assert not [e for e in a.log if e[0] == "move" and e[2][2] < -1e-6]  # nothing came down
+        assert s.state()["quest"]["gap_ms"] < 200
+    finally:
+        alive[0] = False
+        s.close()

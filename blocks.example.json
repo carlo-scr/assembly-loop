@@ -6,9 +6,9 @@
    "name": "red cube",
    "shape": "box",
    "size_mm": [
-    25.0,
-    25.0,
-    25.0
+    25.4,
+    25.4,
+    25.4
    ],
    "colour": "red"
   },
@@ -17,8 +17,8 @@
    "shape": "box",
    "size_mm": [
     57.0,
-    25.0,
-    25.0
+    25.4,
+    25.4
    ],
    "colour": "red"
   },
@@ -27,8 +27,8 @@
    "shape": "box",
    "size_mm": [
     57.0,
-    25.0,
-    12.5
+    25.4,
+    12.7
    ],
    "colour": "red"
   },
@@ -36,7 +36,7 @@
    "name": "red cylinder",
    "shape": "cylinder",
    "size_mm": [
-    25.0,
+    25.4,
     57.0
    ],
    "colour": "red"
@@ -45,9 +45,9 @@
    "name": "yellow cube",
    "shape": "box",
    "size_mm": [
-    25.0,
-    25.0,
-    25.0
+    25.4,
+    25.4,
+    25.4
    ],
    "colour": "yellow"
   },
@@ -56,8 +56,8 @@
    "shape": "box",
    "size_mm": [
     57.0,
-    25.0,
-    25.0
+    25.4,
+    25.4
    ],
    "colour": "yellow"
   },
@@ -66,8 +66,8 @@
    "shape": "box",
    "size_mm": [
     57.0,
-    25.0,
-    12.5
+    25.4,
+    12.7
    ],
    "colour": "yellow"
   },
@@ -75,7 +75,7 @@
    "name": "yellow cylinder",
    "shape": "cylinder",
    "size_mm": [
-    25.0,
+    25.4,
     57.0
    ],
    "colour": "yellow"
@@ -84,9 +84,9 @@
    "name": "green cube",
    "shape": "box",
    "size_mm": [
-    25.0,
-    25.0,
-    25.0
+    25.4,
+    25.4,
+    25.4
    ],
    "colour": "green"
   },
@@ -95,8 +95,8 @@
    "shape": "box",
    "size_mm": [
     57.0,
-    25.0,
-    25.0
+    25.4,
+    25.4
    ],
    "colour": "green"
   },
@@ -105,8 +105,8 @@
    "shape": "box",
    "size_mm": [
     57.0,
-    25.0,
-    12.5
+    25.4,
+    12.7
    ],
    "colour": "green"
   },
@@ -114,7 +114,7 @@
    "name": "green cylinder",
    "shape": "cylinder",
    "size_mm": [
-    25.0,
+    25.4,
     57.0
    ],
    "colour": "green"
@@ -123,9 +123,9 @@
    "name": "blue cube",
    "shape": "box",
    "size_mm": [
-    25.0,
-    25.0,
-    25.0
+    25.4,
+    25.4,
+    25.4
    ],
    "colour": "blue"
   },
@@ -134,8 +134,8 @@
    "shape": "box",
    "size_mm": [
     57.0,
-    25.0,
-    25.0
+    25.4,
+    25.4
    ],
    "colour": "blue"
   },
@@ -144,8 +144,8 @@
    "shape": "box",
    "size_mm": [
     57.0,
-    25.0,
-    12.5
+    25.4,
+    12.7
    ],
    "colour": "blue"
   },
@@ -153,7 +153,7 @@
    "name": "blue cylinder",
    "shape": "cylinder",
    "size_mm": [
-    25.0,
+    25.4,
     57.0
    ],
    "colour": "blue"

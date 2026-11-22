@@ -228,7 +228,7 @@ def cmd_dashboard(a):
         from .eyes import V4L2
 
         camera = V4L2(a.camera)
-    ses = Session(default_arms(a.right, a.left, a.mount_deg), quest_port=a.quest_port, hand=a.hand, spots_path=a.spots, log_dir=a.log, say=print, camera=camera)
+    ses = Session(default_arms(a.right, a.left, a.mount_deg), quest_port=a.quest_port, hand=a.hand, spots_path=a.spots, log_dir=a.log, say=print, camera=camera, key_hold=a.key_hold)
     srv = make_server(ses, a.port)
     print(f"dashboard: http://127.0.0.1:{srv.server_address[1]}/   (nothing is connected until you start a session on the page; Ctrl-C here stops the arm and closes)")
     try:
@@ -288,6 +288,7 @@ def main(argv=None):
     s.add_argument("--right", default="192.168.1.199", help="address of the right arm")
     s.add_argument("--left", default="192.168.1.219", help="address of the left arm")
     s.add_argument("--spots", default="spots.json", help="where taught spots are kept")
+    s.add_argument("--key_hold", action="store_true", help="allow the space bar of the page as the hold-to-run switch of a real arm (when the Quest cannot be used)")
     s.add_argument("--mount_deg", type=float, default=45.0, help="how far the arms are rolled about their forward axis where they are mounted (0: upright)")
     s.add_argument("--camera", default=None, help="the camera that looks at the table (default: the rig's left scene camera)")
     s.add_argument("--quest_port", type=int, default=6666)

@@ -571,3 +571,32 @@ def test_straight_down_follows_how_the_arm_is_mounted(ses):
     assert np.allclose(tool_axis(a.rpy), mount_down("right"), atol=2e-3)
     assert until(lambda: ses.state()["arm"].get("tilt_deg") == pytest.approx(0.0, abs=0.2))
     assert np.allclose(ses.guard.lim.axes[:, 2], -mount_down("right"), atol=2e-3) and np.allclose(ses.guard.lim.axes[:, 0], [1.0, 0.0, 0.0], atol=2e-3)  # up is up, forward is still forward
+
+
+def test_the_space_bar_may_hold_a_real_arm_only_when_the_program_was_started_for_it(tmp_path):
+    arms = {"right": dict(label="Right arm", ip="192.0.2.10", make=FakeArm)}  # a real arm as far as the session knows
+    kw = dict(spots_path=tmp_path / "spots.json", log_dir=tmp_path / "logs", probe=lambda ip: False, guard_kw=dict(poll_s=0.002), limit_kw=dict(settle_s=0.0), quest_port=0)
+    s = Session(arms, **kw)
+    try:
+        assert s.state()["key_hold"] is False
+        with pytest.raises(Refused, match="key_hold"):
+            s.start("right", hold="page")
+    finally:
+        s.close()
+    s = Session(arms, key_hold=True, **kw)
+    try:
+        s.start("right", hold="page")
+        assert s.state()["key_hold"] and s.hold == "page" and not s.fake and s.phase() == "DISARMED"
+        assert not s.state()["checks"][1]["ok"]  # no signal yet: the page has not reported the key
+        s.dm.feed(False)
+        assert until(lambda: all(c["ok"] for c in s.state()["checks"]))
+        s.arm_on()
+        s.dm.feed(True)
+        assert s.gate.held()
+        time.sleep(0.65)  # the page stopped reporting (closed, frozen, or behind another window): that is "released"
+        assert not s.gate.held() and s.dm.why().startswith("no signal")
+        s.end()
+        s.start("right")  # the Quest grip is still what a real arm gets when nothing is said
+        assert s.hold == "quest"
+    finally:
+        s.close()
