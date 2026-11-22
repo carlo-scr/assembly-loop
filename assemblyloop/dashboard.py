@@ -215,7 +215,7 @@ function render(s){
   const ready=(s.checks||[]).length>0&&s.checks.every(k=>k.ok); $("armbtn").disabled=!(s.phase==="DISARMED"&&ready); $("disbtn").disabled=!["ARMED","RUNNING","PAUSED"].includes(s.phase);
   // move
   const names=c.done?c.spots.map(x=>x.name):[];
-  once("names", names, ()=>{ options($("thing"),names,[["","— say where —"]]); options($("dst"),names,[["","a spot picked at random"]]); options($("tw_on"),names,[["","— which spot —"]]); options($("e_on"),names,[["","— which spot —"]]); options($("ph_on"),names,[["","— which spot —"]]); lastThing=undefined; });
+  once("names", names, ()=>{ options($("thing"),names,[["","— say where —"]]); options($("dst"),names,[["","a spot picked at random"]]); options($("tw_on"),names,[["","— which spot —"]]); options($("e_on"),names,[["*","a block, where it lies"]]); options($("ph_on"),names,[["","— which spot —"]]); lastThing=undefined; });
   const st=s.stack, nNow=st?st.n:undefined; if(nNow!==lastN){ lastN=nNow; if(st){ $("tw_n").value=st.n==null?"":st.n; $("tw_on").value=st.on; } }
   const on=$("tw_on").value, feeds=names.filter(n=>n!==on).slice(0,6); ["tw_build","tw_down","tw_loop"].forEach(id=>{ $(id).disabled=s.phase!=="ARMED"; });
   $("tw_note").textContent=!c.done?"":(!on?"Choose the spot the tower stands on. One block stands on every other spot.":`One block stands on each of ${feeds.join(", ")}. They go onto ${on} in that order: the first at the taught height, each next one a block height higher, let go ${s.drop_mm} mm above the one below. Taking down goes top first, every block back to its own spot.`+(st&&st.n==null?" The last run did not end as planned: say how many blocks stand on the tower now.":""));

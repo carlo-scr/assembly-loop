@@ -334,7 +334,7 @@ class Sight:
         eyes, setup, g, sp = self._eyes(), self.setup, self.guard, job["spots"]
         # first from where the arm waited when the camera was shown the table (from there it saw most of the mat), then
         # from above the taught spot that shows farthest from the build
-        placed, tries = job["expect"][:k + 1], ((["wait"] if "wait" in sp.at else []) + self._aside(at))[:2]
+        placed, tries = job["expect"][:k + 1 + job.get("expect_from", 0)], ((["wait"] if "wait" in sp.at else []) + self._aside(at))[:2]
         for i, far in enumerate(tries):
             g.move_to(sp.above(g.where()), self.P.lift, "up to the travel height")
             g.move_to(sp.above(sp.grasp(far)), self.P.travel, "out of the camera's way")
@@ -368,7 +368,9 @@ class Sight:
             raise NotAsPlanned("; ".join(bad))
 
     def build_seen(self, on, rehearse=False, step=False, check=True):
-        """A tower on the taught spot `on` from the blocks of the last look, widest first."""
+        """A tower from the blocks of the last look, widest first: on the taught spot `on`, or with `on` = "*" on the
+        widest block itself, which stays where it lies (the others go onto it, turned as it lies). No spot is needed
+        for that, and nobody has to know where one is."""
         with self.lock:
             if self.phase() != "ARMED":
                 raise Refused(f"a tower can only be started when ARMED (now: {self.phase()})")
@@ -381,18 +383,40 @@ class Sight:
                 self._empty_handed("a tower")
             if s is None or s["stale"] or time.time() - s["t"] > 300.0:
                 raise Refused("press Look first: the arm builds from a picture taken after the last move, at most five minutes old")
-            self.spots.grasp(on)
             table, up = setup.table, self.spots.up
-            base = table.coords(self.spots.grasp(on))[:2]
-            free = [b for b in s["seen"] if np.hypot(b.uv[0] - base[0], b.uv[1] - base[1]) >= 60.0]
-            if len(free) < len(s["seen"]):
-                raise Refused(f"something stands where the tower goes ({on}): clear that spot, then Look again")
-            levels, _ = plan_tower(free, cat, max_mm=self._tower_max())
-            if not levels:
-                raise Refused("the camera sees no block that can go onto a tower")
-            sp, legs, expect = copy.deepcopy(self.spots), [], []
-            turn_on = -twist_deg(rpy_matrix(setup.rpy_ref), rpy_matrix(self.spots.turn(on)))[0]  # how the gripper is turned at `on`, about up, from rpy_ref
+            sp, legs, expect, first = copy.deepcopy(self.spots), [], [], 0
+            if on == "*":  # onto the widest block, where it lies
+                levels, _ = plan_tower(s["seen"], cat, max_mm=self._tower_max())
+                if len(levels) < 2:
+                    raise Refused("putting blocks onto a block takes at least two that the camera made out and that can be stacked")
+                same = [lv for lv in levels if (lv["block"].rest.long, lv["block"].rest.short, lv["block"].rest.height) == (levels[0]["block"].rest.long, levels[0]["block"].rest.short, levels[0]["block"].rest.height)]
+                if len(same) > 1:  # blocks of one size: the one nearest the middle of what the camera was shown stays (it sees best there)
+                    mid = np.mean(np.asarray(setup.area, float), 0)
+                    stay = min(same, key=lambda lv: float(np.linalg.norm(np.asarray(lv["block"].uv) - mid)))["block"]
+                    order = [stay] + [lv["block"] for lv in levels if lv["block"] is not stay]
+                    levels, top = [], 0.0
+                    for b in order:  # the same levels, in the new order
+                        levels.append(dict(block=b, base_mm=top, hold_mm=b.hold_mm(cat.finger_mm), top_mm=top + b.rest.height))
+                        top += b.rest.height
+                b0, first = levels[0]["block"], 1
+                base, t0 = np.asarray(b0.uv, float), b0.rest.turns
+                turn_on = 0.0 if not t0 else (b0.angle - setup.angle_ref + t0 / 2.0) % t0 - t0 / 2.0
+                on = f"the {b0.name}"  # for this job the block is a spot: the gripper as it would take it there
+                sp.at[on], sp.rot[on] = table.point(base[0], base[1], setup.w_grasp), spin(setup.rpy_ref, up, turn_on)
+                expect.append(dict(name=b0.name, kind=b0.kind, rest=b0.rest, uv=tuple(base), angle=b0.angle, z=0.0))  # it is looked at too: it must stay where it is
+            else:
+                self.spots.grasp(on)
+                base = table.coords(self.spots.grasp(on))[:2]
+                free = [b for b in s["seen"] if np.hypot(b.uv[0] - base[0], b.uv[1] - base[1]) >= 60.0]
+                if len(free) < len(s["seen"]):
+                    raise Refused(f"something stands where the tower goes ({on}): clear that spot, then Look again")
+                levels, _ = plan_tower(free, cat, max_mm=self._tower_max())
+                if not levels:
+                    raise Refused("the camera sees no block that can go onto a tower")
+                turn_on = -twist_deg(rpy_matrix(setup.rpy_ref), rpy_matrix(self.spots.turn(on)))[0]  # how the gripper is turned at `on`, about up, from rpy_ref
             for k, lv in enumerate(levels):
+                if k < first:
+                    continue
                 b = lv["block"]
                 name = b.name if b.name not in self.spots.at else b.name + " (seen)"
                 t = b.rest.turns
@@ -405,10 +429,10 @@ class Sight:
             if check:
                 self._wait_spot(sp)
             self._reach([sp.grasp(leg["src"]) for leg in legs] + [sp.above(sp.grasp(leg["src"])) for leg in legs] + [sp.above(sp.grasp(on))], sp.rpy, "this tower")
-            self.stack, self.thing_at = dict(on=on, block_mm=None, n=0, of=len(levels), feeds=[leg["src"] for leg in legs]), None
+            self.stack, self.thing_at = dict(on=on, block_mm=None, n=first, of=len(levels), feeds=[leg["src"] for leg in legs]), None
             s["stale"] = True
             self.job = dict(steps=[], i=None, waiting=False, outcome=None, done=0, total=len(legs), src=legs[0]["src"], dst=on, rehearse=bool(rehearse), step=bool(step),
-                            fixed=None, kind="move", legs=legs, spots=sp, text=legs[0]["text"], tower=True, watch=bool(check), expect=expect, last_seen=list(s["seen"]), what=f"tower on {on}")
+                            fixed=None, kind="move", legs=legs, spots=sp, text=legs[0]["text"], tower=True, watch=bool(check), expect=expect, expect_from=first, last_seen=list(s["seen"]), what=f"tower on {on}")
             self._watch(self.job, table.point(base[0], base[1], setup.w_grasp))
             self.say(f"a tower of {len(levels)} on {on}, {levels[-1]['top_mm']:.0f} mm high: " + ", ".join(lv["block"].name for lv in levels)
                      + (", checked by the camera after every block" if check and not rehearse else ""))
@@ -460,7 +484,10 @@ class Sight:
 
     # ------------------------------------------------------------------ build a design from what the camera sees
     def build_design(self, name, on, rehearse=False, step=False, check=True):
-        """The saved design `name`, built on the taught spot `on` from the blocks of the last look."""
+        """The saved design `name`, built from the blocks of the last look: on the taught spot `on`, or with `on` = "*"
+        starting from a block that already lies on the mat. The design's first block is then not moved: a block of
+        its kind stays where it lies and the others are put down around and onto it, the whole design turned as that
+        block lies. No spot is needed for that."""
         from . import design as D
 
         with self.lock:
@@ -473,7 +500,9 @@ class Sight:
             s, setup = self.sight, self.setup
             if s is None or s["stale"] or time.time() - s["t"] > 300.0:
                 raise Refused("press Look first: the arm builds from a picture taken after the last move, at most five minutes old")
-            self.spots.grasp(on)
+            anchored = on == "*"
+            if not anchored:
+                self.spots.grasp(on)
             dz = D.load(self.designs_dir, name)
             rep = D.check(dz, cat, max_mm=self._tower_max())
             if not rep["ok"]:
@@ -481,15 +510,35 @@ class Sight:
                 raise Refused(f"the design {dz.name!r} cannot be built ({first or (rep['problems'] or ['it does not stand'])[0]}): open it in the designer")
             parts = D.resolve(dz, cat)
             table, up = setup.table, self.spots.up
-            base = table.coords(self.spots.grasp(on))[:2]
             fwd = np.array([1.0, 0.0, 0.0]) if abs(up[0]) < 0.9 else np.array([0.0, 1.0, 0.0])  # the design's forward: away from the base, level
             fwd = fwd - (fwd @ up) * up
             fwd /= np.linalg.norm(fwd)
             f2, l2 = (table.axes.T @ fwd)[:2], (table.axes.T @ np.cross(up, fwd))[:2]
+            stays = None
+            if anchored:  # the design's first block is one that already lies there: the design is laid around it, turned as it lies
+                if len(parts) < 2:
+                    raise Refused("a design that starts from a block on the mat has at least two blocks")
+                p0 = parts[0]
+                fits = [b for b in s["seen"] if b.kind.name == p0.kind.name and b.rest.name == p0.rest.name]
+                if not fits:
+                    raise Refused(f"the design starts with a {p0.kind.name} ({p0.rest.name}): lay one on the mat, then Look again")
+                mid = np.mean(np.asarray(setup.area, float), 0)
+                stays = min(fits, key=lambda b: float(np.linalg.norm(np.asarray(b.uv) - mid)))  # the one nearest the middle of what the camera was shown
+                t0 = p0.rest.turns
+                a0 = float(np.degrees(np.arctan2(*(np.cos(np.radians(p0.block.angle)) * f2 + np.sin(np.radians(p0.block.angle)) * l2)[::-1])))
+                rho = np.radians(0.0 if not t0 else (stays.angle - a0 + t0 / 2.0) % t0 - t0 / 2.0)
+                f2, l2 = np.cos(rho) * f2 + np.sin(rho) * l2, -np.sin(rho) * f2 + np.cos(rho) * l2
+                base = np.asarray(stays.uv, float) - p0.block.x * f2 - p0.block.y * l2
+                on = f"the {stays.name}"
+                fwd = table.axes @ np.r_[f2, 0.0]  # the design's forward, as a direction of the arm (for the room check below)
+            else:
+                base = table.coords(self.spots.grasp(on))[:2]
             uv = lambda x, y: base + x * f2 + y * l2  # noqa: E731  a point of the design on the table
             to_design = lambda q: np.array([(np.asarray(q) - base) @ f2, (np.asarray(q) - base) @ l2])  # noqa: E731
             ang = lambda deg: float(np.degrees(np.arctan2(*(np.cos(np.radians(deg)) * f2 + np.sin(np.radians(deg)) * l2)[::-1])))  # noqa: E731  a direction of the design, as a direction of the table
             for b in s["seen"]:  # nothing may lie where the design goes, nor where the fingers reach beside it
+                if b is stays:
+                    continue
                 q, a = to_design(b.uv), np.radians(b.angle)
                 d = np.cos(a) * table.axes[:, 0] + np.sin(a) * table.axes[:, 1]  # its long side, as a direction of the arm
                 deg = float(np.degrees(np.arctan2(d @ np.cross(up, fwd), d @ fwd)))
@@ -499,6 +548,10 @@ class Sight:
             pool, legs, plan, missing, expect = sorted(s["seen"], key=lambda b: float(np.linalg.norm(np.asarray(b.uv) - base))), [], [], {}, []
             sp = copy.deepcopy(self.spots)
             for k, p in enumerate(parts):
+                if k == 0 and stays is not None:  # it lies there already; the camera looks at it too
+                    pool.remove(stays)
+                    expect.append(dict(name=stays.name, kind=p.kind, rest=p.rest, uv=tuple(stays.uv), angle=stays.angle, z=0.0))
+                    continue
                 b = next((b for b in pool if b.kind.name == p.kind.name and b.rest.name == p.rest.name), None)
                 if b is None:
                     missing[(p.kind.name, p.rest.name)] = missing.get((p.kind.name, p.rest.name), 0) + 1
@@ -525,7 +578,7 @@ class Sight:
             self.stack, self.thing_at = dict(on=on, block_mm=None, n=0, of=len(legs), feeds=[leg["src"] for leg in legs], design=dz.name), None
             s["stale"] = True
             self.job = dict(steps=[], i=None, waiting=False, outcome=None, done=0, total=len(legs), src=legs[0]["src"], dst=legs[0]["dst"], rehearse=bool(rehearse), step=bool(step),
-                            fixed=None, kind="move", legs=legs, spots=sp, text=legs[0]["text"], tower=True, plan=plan, watch=bool(check), expect=expect,
+                            fixed=None, kind="move", legs=legs, spots=sp, text=legs[0]["text"], tower=True, plan=plan, watch=bool(check), expect=expect, expect_from=0 if stays is None else 1,
                             last_seen=list(s["seen"]), what=f"design {dz.name!r} on {on}")
             self._watch(self.job, table.point(base[0], base[1], setup.w_grasp))
             low = rep["tilt_deg"]

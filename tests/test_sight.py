@@ -554,3 +554,26 @@ def eyes_setup_again(ses):
     from assemblyloop.eyes import Setup
 
     return Setup.load(ses.camera_path)
+
+
+def test_blocks_are_put_onto_the_widest_one_where_it_lies_without_any_spot_for_it(ses):
+    shown(ses)
+    lay_out(ses, {"slab": ("blue slab", 0, 440.0, 60.0, 100.0), "bar": ("green bar", 0, 445.0, -95.0, 30.0), "cube": ("yellow cube", 0, 395.0, -20.0, 10.0)})
+    ses.look()
+    a = ses.arm
+    slab = a.bricks["slab"].copy()
+    ses.build_seen("*")
+    assert until(lambda: ses.worker is None, 180)
+    assert ses.job["outcome"] == "done" and ses.stack["n"] == 3 and ses.stack["on"] == "the blue slab", (ses.job["outcome"], ses.stack, list(ses.lines)[-5:])
+    assert np.allclose(a.bricks["slab"], slab)  # the slab was never touched
+    up, drop = ses.spots.up, ses.P.drop_mm
+    for name, level in (("cube", 15.0 + drop), ("bar", 45.0 + drop)):  # widest first: the slab (15 mm), the cube (30 mm), the bar
+        d = a.bricks[name] - slab
+        assert abs(float(d @ up) - level) < 0.6 and np.linalg.norm(d - (d @ up) * up) < 3.0, (name, d)
+    assert abs((a.turned.get("bar", 0.0) + 30.0 - 100.0 + 90.0) % 180.0 - 90.0) < 3.0  # the bar was turned to lie along the slab (which lies at 100 degrees)
+    checks = [json.loads(line) for line in open(ses.log_dir / "moves.jsonl") if '"check"' in line]
+    assert len(checks) == 2 and not any(c["problems"] for c in checks) and [len(c["blocks"]) for c in checks] == [2, 3]  # the slab is looked at too
+    lay_out(ses, {"slab": ("blue slab", 0, 440.0, 60.0, 100.0)})
+    ses.look()
+    with pytest.raises(Refused, match="at least two"):
+        ses.build_seen("*")

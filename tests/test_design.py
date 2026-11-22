@@ -262,6 +262,34 @@ def test_a_design_is_built_from_the_blocks_the_camera_sees(tmp_path):
         assert [g for g in grips if g in (600, 450, 500)] == [600, 450, 500], grips  # let go opening 10 mm past each side of the block: 40, 25 and 30 mm across
         assert [g for g in grips if g in (375, 275)] == [375, 275] and 0 not in grips, grips  # ... and each was closed on gently: 2.5 mm under its width, never as hard as the jaws go
         assert s.state()["scene"]["plan"] == []
+        # the same design, started from the slab where it lies: no spot is named, the slab is not moved, the others go onto it turned as it lies
+        a.holding, a.bricks, a.turned = None, {}, {}
+        for name, (kind, rest, x, y, angle) in {"slab": ("blue slab", 0, 440.0, 60.0, 35.0), "bar": ("green bar", 0, 445.0, -95.0, 30.0), "cube": ("yellow cube", 0, 400.0, -70.0, 10.0)}.items():
+            r = SCAT.kind(kind).rests()[rest]
+            uv = setup.table.coords([x, y, 0.0])[:2]
+            a.bricks[name] = setup.table.point(uv[0], uv[1], setup.w_grasp + max(0.0, r.height - SCAT.finger_mm))
+            a.widths[name] = r.short
+            s.camera.what[name] = (kind, rest, angle)
+        s.look()
+        slab = a.bricks["slab"].copy()
+        s.build_design("Test", "*")
+        assert until(lambda: s.worker is None, 180) and s.job["outcome"] == "done", (s.job["outcome"], list(s.lines)[-5:])
+        assert np.allclose(a.bricks["slab"], slab) and s.stack["on"] == "the blue slab" and s.job["total"] == 2  # two blocks were moved; the slab stayed
+        ax = np.radians(35.0)  # the design's forward is now the slab's long side (the design has it at 0 degrees)
+        f = np.cos(ax) * setup.table.axes[:, 0] + np.sin(ax) * setup.table.axes[:, 1]  # (a block's angle is counted in the table's own two directions)
+        across = np.cross(up, f)
+        for name, blk in (("bar", d.blocks[1]), ("cube", d.blocks[2])):
+            q = a.bricks[name] - slab
+            r = SCAT.kind(blk.kind).rests()[0]
+            want_up = blk.z + max(0.0, r.height - SCAT.finger_mm) + s.P.drop_mm
+            assert abs(abs(q @ f) - blk.x) < 2.0 and abs(q @ across) < 2.0 and abs(q @ up - want_up) < 0.6, (name, q @ f, q @ across, q @ up)  # 10 mm along the slab (either way: a slab looks the same turned round)
+        checks = [json.loads(line) for line in open(s.log_dir / "moves.jsonl") if '"check"' in line][-2:]
+        assert not any(c["problems"] for c in checks) and [len(c["blocks"]) for c in checks] == [2, 3]  # the slab is looked at with the others
+        a.bricks.pop("slab")
+        s.camera.what.pop("slab")
+        s.look()
+        with pytest.raises(D.Refused, match="starts with a blue slab"):
+            s.build_design("Test", "*")
     finally:
         alive[0] = False
         s.close()
