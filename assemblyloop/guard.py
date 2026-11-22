@@ -88,6 +88,7 @@ class Guard:
         self.arm, self.deadman, self.lim = arm, deadman, limits
         self.clock, self.sleep, self.poll_s, self.start_s, self.resume_s, self.say = clock, sleep, float(poll_s), float(start_s), float(resume_s), say
         self.latched, self.events, self._abort = None, [], None
+        self.counts = None  # where the gripper came to rest the last time it was sent somewhere (for the page's model)
         self.turn_sign, self._sign_known = 1.0, False  # which way the gripper spins when joint 7 goes up: found out on the first turn
         self._log = open(log_path, "a") if log_path else None
 
@@ -425,6 +426,7 @@ class Guard:
         except ArmFault as e:
             self._fail(str(e))
         self.note("grip", what=what, asked=int(counts), got=int(got))
+        self.counts = int(got)
         return got
 
     def read(self, what=""):

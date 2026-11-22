@@ -1,6 +1,6 @@
 # assembly-loop
 
-![The dashboard during a tower build on the stand-in arm](docs/dashboard.png)
+![The dashboard during a tower build on the stand-in arm: the sequence and the controls on the left, a model of the arm and the camera pictures on the right](docs/dashboard.png)
 
 Hold-to-run assembly on a UFACTORY xArm 7. One local web page starts a session at the robot, teaches it places, arms
 it, runs a task and stops it. Every motion goes through one guard, and the arm moves only while a person holds the
@@ -9,9 +9,10 @@ grip of a Quest controller.
 Today it moves wooden blocks between places taught by hand and stacks them into a tower. Press-fit bricks and cables
 are meant to follow on the same base.
 
-> **Status, 19 November 2026.** Everything here is tested on a stand-in arm (52 tests). On the real right arm, a session,
+> **Status, 21 November 2026.** Everything here is tested on a stand-in arm (62 tests). On the real right arm, a session,
 > the Quest grip and nudging have run; moving blocks, towers and the camera have not. The first session on the arm
-> follows the rungs below, one at a time.
+> follows the rungs below, one at a time. The page that fits one screen (the model of the arm, the live pictures) has
+> run on the stand-in arm only: its cameras have not been opened on the rig yet. The older page is kept at `/classic`.
 
 ## Run it
 
@@ -23,8 +24,11 @@ git clone https://github.com/carlo-scr/assembly-loop.git
 cd assembly-loop
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e ".[real]"
+pip install -e ".[real,eyes]"
 ```
+
+`real` is the arm's SDK; `eyes` is OpenCV, for the live pictures and the camera that finds the blocks. After a
+`git pull` that changes what is needed, run the `pip install` line again.
 
 From then on, in every new terminal:
 
@@ -36,6 +40,28 @@ python -m assemblyloop dashboard
 
 Then open `http://127.0.0.1:8777/` in a browser on the same machine.
 
+## The page
+
+It fits one screen and does not scroll:
+
+- **Top left, the sequence:** session, checks, arm, places, run. Only the step that is next is spelled out.
+- **Below it, the controls,** once armed: the nudge keys (W A S D, Q E, Z C, F R) while places are taught, then moving
+  blocks, towers and the block finder.
+- **Top right, a model of the arm** you are working with, in the pose the controller reports. Around it: the box the
+  fingertips may be in, the taught spots, and a dashed line through every place the current move still goes to. Drag
+  to turn it. It is a drawing: nothing is steered or judged by it.
+- **Bottom right, the cameras** that belong to that arm (the two scene cameras and the two on its gripper), live. Every
+  picture carries its age: one that stopped arriving turns grey and says for how long. Click a picture to enlarge it.
+- **Top bar:** the state, what to do next, the hold-to-run signal, STOP SESSION.
+
+Good to know:
+
+- **The older page** (one long column, no model, no pictures) is at `http://127.0.0.1:8777/classic`. Same program,
+  same buttons: use it if the new page misbehaves.
+- **Cameras are opened only while the page is open,** and let go a few seconds after it is closed or hidden. With
+  `--no_feeds` the page opens no camera at all.
+- **The page needs no internet:** three.js and the arm's meshes are in `assemblyloop/web/`.
+
 - **`python: command not found`** means the environment is not active in that terminal: run the `source` line.
 - **`python3 -m venv` fails** (some Ubuntu installs lack it): with [uv](https://docs.astral.sh/uv/) installed, use
   `uv venv && uv pip install -e ".[real]"` instead of the two lines after `cd`.
@@ -44,8 +70,8 @@ Then open `http://127.0.0.1:8777/` in a browser on the same machine.
 
 - **Teleoperation must be closed first.** Both listen for the Quest on port 6666.
 - **Without a robot,** choose "Stand-in arm" on the page. The space bar stands in for the grip.
-- **Without the Quest:** `python -m assemblyloop dashboard --key_hold` lets the space bar of the page be the
-  hold-to-run switch of a real arm. It counts only while the page is in front and has the keyboard.
+- **Without the Quest:** `python -m assemblyloop dashboard --key_hold` puts a MOVING switch in the top bar of the page:
+  click it and the arm may move, click it again or press the space bar or Esc and it stops. It stays on behind another window.
 - **The arms are mounted at 45 degrees,** rolled about their forward axis like shoulders. "Straight down" on the page
   takes that into account. On another rig: `--mount_deg 0` for an upright arm.
 - **Other arm addresses:** `python -m assemblyloop dashboard --right 192.168.1.199 --left 192.168.1.219`
@@ -156,7 +182,10 @@ assemblyloop/
   sight.py      the camera in a session: show it the table, look, build a tower from what it sees
   plate.py      a stud plate taught from three poses (press-fit bricks; command line only for now)
   session.py    one session: OFF, DISARMED, AWAITING CALIBRATION, ARMED, RUNNING
-  dashboard.py  the web page of a session
+  feeds.py      the live pictures: one owner per camera, lent to the block finder for its own picture
+  dashboard.py  the local web server of a session, and the older page
+  web/          the page that fits one screen (index.html, app.css, app.js), the model of the arm (scene.js),
+                three.js (vendor/, MIT) and UFACTORY's xArm 7 meshes (xarm7/, BSD-3-Clause, from MuJoCo Menagerie)
 tests/          the safety rules and the session, on the stand-in arm
 ```
 

@@ -1,7 +1,14 @@
 """The dashboard: one local web page from which a session at the robot is started, calibrated, armed, run and stopped.
-Standard library only, no build step, like the lab's.
+Standard library only on this side, no build step, like the lab's.
 
     python -m assemblyloop dashboard            then open http://127.0.0.1:8777/ and choose an arm on the page
+
+Two pages over the same buttons:
+  /          the page that fits one screen: the arming sequence and the controls on the left, a model of the arm and
+             the live pictures of the cameras on the right. Its files are in `web/` (the model is drawn with three.js,
+             which is kept in `web/vendor/` so that the page needs no internet).
+  /classic   the older page, one long column of cards (`PAGE` below). Kept as it was: if the new page misbehaves at
+             the rig, this one does everything except the model and the live pictures.
 
 The page starts at OFF and shows which arms answer on the network. "Start session" connects (read only) -> DISARMED.
 "Arm" switches the arm on -> AWAITING CALIBRATION: the page's own buttons nudge the gripper to each place, which is
@@ -17,11 +24,24 @@ from __future__ import annotations
 
 import json
 import secrets
+import struct
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 from .arms import ArmFault, run_fake_clock  # noqa: F401  (run_fake_clock is re-exported for older callers)
 from .guard import Refused, Released
+
+WEB = Path(__file__).parent / "web"
+KINDS = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".stl": "model/stl", ".txt": "text/plain; charset=utf-8"}
+
+
+def web_files():
+    """Every file of the page, by the name it is asked for. Only these names are ever served: nothing asked for by
+    a path can reach outside `web/`."""
+    return {f.relative_to(WEB).as_posix(): f for f in sorted(WEB.rglob("*")) if f.is_file() and not f.name.startswith(".")}
+
 
 PAGE = r"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -289,8 +309,8 @@ addEventListener("keydown",e=>{ if(window.HOLD!=="page"||(e.code!=="Space"&&e.co
 
 def make_server(session, port=8777):
     """The HTTP server for a session (not started). `server.token` is what the page's buttons must send."""
-    token = secrets.token_urlsafe(18)
-    pages = [0]  # how many times the page was opened: the last one opened is the only one whose switch counts
+    token, files = secrets.token_urlsafe(18), web_files()
+    pages = [0]  # how many times a page was opened: the last one opened is the only one whose switch counts
 
     def act(path, b):
         if path == "/api/stop":
@@ -346,14 +366,17 @@ def make_server(session, port=8777):
         def log_message(self, *a):  # quiet: the page polls four times a second
             pass
 
-        def _send(self, body, code=HTTPStatus.OK, kind="application/json"):
+        def _send(self, body, code=HTTPStatus.OK, kind="application/json", keep=False):
             data = body if isinstance(body, bytes) else json.dumps(body, default=float).encode()
             self.send_response(code)
             self.send_header("Content-Type", kind)
             self.send_header("Content-Length", str(len(data)))
-            self.send_header("Cache-Control", "no-store")
+            self.send_header("Cache-Control", "max-age=86400" if keep else "no-store")  # kept by the browser: three.js and the arm's meshes, which never change
             self.end_headers()
             self.wfile.write(data)
+
+        def _token(self):
+            return secrets.compare_digest(self.headers.get("X-Token") or "", token)
 
         def _local(self):
             return (self.headers.get("Host") or "").split(":")[0] in ("127.0.0.1", "localhost")
@@ -361,12 +384,32 @@ def make_server(session, port=8777):
         def do_GET(self):
             if not self._local():
                 return self._send(dict(error="this page answers on 127.0.0.1 only"), HTTPStatus.FORBIDDEN)
-            if self.path == "/":
+            url = urlsplit(self.path)
+            if url.path in ("/", "/classic"):
                 pages[0] += 1
-                return self._send(PAGE.replace("__TOKEN__", token).replace("__PAGE__", str(pages[0])).encode(), kind="text/html; charset=utf-8")
-            if self.path == "/api/state":
+                page = (WEB / "index.html").read_text() if url.path == "/" else PAGE
+                return self._send(page.replace("__TOKEN__", token).replace("__PAGE__", str(pages[0])).encode(), kind="text/html; charset=utf-8")
+            if url.path.startswith("/web/"):
+                f = files.get(url.path[5:])
+                if f is None or f.name == "index.html":
+                    return self._send(dict(error="not found"), HTTPStatus.NOT_FOUND)
+                return self._send(f.read_bytes(), kind=KINDS.get(f.suffix, "application/octet-stream"), keep=f.parent.name in ("vendor", "xarm7"))
+            if url.path == "/api/state":
                 return self._send({**session.state(), "page": pages[0]})
-            if self.path.split("?")[0] == "/api/sight.jpg" and session.sight_jpg():
+            if url.path == "/api/view":
+                return self._send(session.view())
+            if url.path == "/api/frames":
+                if not self._token():  # pictures of the lab: for the dashboard's own page only
+                    return self._send(dict(error="refused: not asked by the dashboard's own page"), HTTPStatus.FORBIDDEN)
+                q = parse_qs(url.query)
+                try:
+                    after = int(q.get("after", ["0"])[0])
+                except ValueError:
+                    after = 0
+                head, pictures = session.frames(after, q.get("side", [None])[0])
+                head = json.dumps(head, default=float).encode()
+                return self._send(struct.pack(">I", len(head)) + head + b"".join(pictures), kind="application/octet-stream")
+            if url.path == "/api/sight.jpg" and session.sight_jpg():
                 return self._send(session.sight_jpg(), kind="image/jpeg")
             return self._send(dict(error="not found"), HTTPStatus.NOT_FOUND)
 
@@ -375,7 +418,7 @@ def make_server(session, port=8777):
                 raw = self.rfile.read(min(int(self.headers.get("Content-Length") or 0), 1 << 20))
             except ValueError:
                 raw = b""
-            if not self._local() or not secrets.compare_digest(self.headers.get("X-Token") or "", token):
+            if not self._local() or not self._token():
                 return self._send(dict(error="refused: this button was not pressed on the dashboard's own page"), HTTPStatus.FORBIDDEN)
             try:
                 body = json.loads(raw or b"{}")

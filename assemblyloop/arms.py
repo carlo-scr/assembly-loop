@@ -45,6 +45,43 @@ def flange_mm(joints_deg):
     return T[:3, 3] * 1e3
 
 
+_REST = np.radians([0.0, 0.0, 0.0, 60.0, 0.0, 60.0, 0.0])  # an ordinary posture over a table, the gripper pointing down
+
+
+def _frames(q):
+    """Where every joint is and which way its axis points (4 x 4 each, metres), from seven joint angles [rad]."""
+    T, out = np.eye(4), []
+    for (x, y, z, a), th in zip(_CHAIN, q):
+        ca, sa, ct, st = np.cos(a), np.sin(a), np.cos(th), np.sin(th)
+        T = T @ np.array([[ct, -st, 0.0, x], [ca * st, ca * ct, -sa, y], [sa * st, sa * ct, ca, z], [0.0, 0.0, 0.0, 1.0]])
+        out.append(T)
+    return out
+
+
+def joints_for(xyz_mm, R, seed_deg=None, rounds=60):
+    """Seven joint angles [deg] that put the flange at `xyz_mm` with the orientation `R`, near `seed_deg`.
+    FOR DRAWING ONLY: the stand-in arm has no joints of its own, and the page's model needs some. Nothing that moves
+    an arm or judges a move reads this. Of the many postures that reach a pose it prefers the ordinary one over a table."""
+    q = _REST.copy() if seed_deg is None else np.radians(np.asarray(seed_deg, float)[:7])
+    want, R = np.asarray(xyz_mm, float) * 1e-3, np.asarray(R, float)
+    for _ in range(int(rounds)):
+        F = _frames(q)
+        p, E = F[-1][:3, 3], R @ F[-1][:3, :3].T  # E: the turn that is still missing, in the base frame
+        ang = float(np.arccos(np.clip((np.trace(E) - 1.0) / 2.0, -1.0, 1.0)))
+        axis = np.array([E[2, 1] - E[1, 2], E[0, 2] - E[2, 0], E[1, 0] - E[0, 1]])
+        if np.linalg.norm(axis) < 1e-6:  # no turn missing, or exactly half a turn (then any axis of E + 1 will do)
+            axis = np.zeros(3) if ang < 1.0 else max((E + np.eye(3)).T, key=np.linalg.norm)
+        w = np.zeros(3) if not np.linalg.norm(axis) else axis / np.linalg.norm(axis) * ang
+        if np.linalg.norm(want - p) < 2e-5 and ang < 2e-4:
+            break
+        J = np.array([np.r_[np.cross(T[:3, 2], p - T[:3, 3]), T[:3, 2]] for T in F]).T
+        JJ = J @ J.T + 1e-4 * np.eye(6)
+        dq = J.T @ np.linalg.solve(JJ, np.r_[want - p, w])
+        dq += 0.1 * (np.eye(7) - J.T @ np.linalg.solve(JJ, J)) @ (_REST - q)  # what is left free leans towards the ordinary posture
+        q = q + dq * min(1.0, 0.4 / max(float(np.max(np.abs(dq))), 1e-9))
+    return np.degrees(q)
+
+
 def rpy_matrix(rpy_deg):
     """The controller's roll / pitch / yaw [deg] as a rotation matrix: R = Rz(yaw) Ry(pitch) Rx(roll). Its third column
     is the gripper's own axis in the base frame."""
@@ -209,6 +246,12 @@ class FakeArm:
     def joints_now(self):
         return [self.swing_deg if self.tilt is not None else 0.0] * 6 + [self.j7]
 
+    def joints_view(self):
+        """Joint angles for the page's model of the arm (the stand-in has none of its own: a posture that reaches its
+        pose is worked out, starting from the last one so that the model moves smoothly)."""
+        self._view = joints_for(self.p, rpy_matrix(self.rpy), getattr(self, "_view", None))
+        return [float(v) for v in self._view]
+
     def moving_now(self):
         return (self.target is not None or self.turn_target is not None or self.tilt is not None) and not self.paused and not self.stopped
 
@@ -346,6 +389,8 @@ class XArm:
             if min(float(v) - lo, hi - float(v)) < margin_deg:
                 return f"joint {i + 1} would be at {float(v):.0f} deg, at the end of its range"
         return ""
+
+    joints_view = joints_now  # for the page's model: what the controller publishes anyway, no round trip
 
     def rpy_now(self):
         return np.array(self.api.position[3:6], float)

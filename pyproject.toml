@@ -22,6 +22,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["assemblyloop*"]
 
+[tool.setuptools.package-data]
+assemblyloop = ["web/*", "web/vendor/*", "web/xarm7/*"]  # the page, three.js and the arm's meshes
+
 [tool.ruff]
 line-length = 140
 target-version = "py39"
