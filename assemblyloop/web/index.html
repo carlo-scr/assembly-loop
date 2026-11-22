@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Assembly loop</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/web/app.css">
+<script type="importmap">{"imports":{"three":"/web/vendor/three.module.min.js"}}</script>
+</head><body>
+
+<header>
+  <div class="brand"><i></i>Assembly loop</div>
+  <div id="phase" class="phase">…</div>
+  <div id="hint"></div>
+  <div id="hold" class="hold"><i></i><div><b id="held">no session</b><small id="holdsub"></small></div></div>
+  <button id="stop" title="Stops the arm and ends this session">STOP SESSION</button>
+</header>
+<div id="msg" hidden></div>
+
+<main>
+<div class="col left">
+
+  <section id="seq" class="card">
+    <h2>Sequence</h2>
+    <ol class="rungs">
+      <li id="r1"><span class="n">1</span>
+        <div class="b"><h3>Session<span class="sum" id="r1sum"></span></h3>
+          <div id="s_off"><div id="arms" class="armlist"></div>
+            <label class="chk" id="questrow" hidden><input type="checkbox" id="usequest"> use the Quest grip instead of the space bar</label></div>
+          <div id="s_on" class="muted" hidden></div>
+          <div id="ended" class="warn"></div></div>
+        <div class="a"><button id="startbtn" class="go">Start session</button><button id="endbtn" hidden>End session</button></div></li>
+      <li id="r2"><span class="n">2</span>
+        <div class="b"><h3>Checks<span class="sum" id="r2sum"></span></h3><div id="k_none" class="muted">Start with the session.</div><div id="checks" class="chips"></div></div></li>
+      <li id="r3"><span class="n">3</span>
+        <div class="b"><h3>Arm<span class="sum" id="r3sum"></span></h3><div class="muted">Arming moves nothing. The arm moves only during a move, and only while the grip is held.</div></div>
+        <div class="a"><button id="armbtn" class="go">Arm</button><button id="disbtn" hidden>Disarm</button></div></li>
+      <li id="r4"><span class="n">4</span>
+        <div class="b"><h3>Places<span class="sum" id="r4sum"></span></h3><div id="c_status" class="muted"></div></div>
+        <div class="a"><button id="calbtn" hidden>Teach again</button></div></li>
+      <li id="r5"><span class="n">5</span>
+        <div class="b"><h3>Run<span class="sum" id="r5sum"></span></h3><div id="runline" class="muted"></div></div></li>
+    </ol>
+  </section>
+
+  <section id="ctl" class="card">
+
+    <div id="p_none" class="empty"><h2>Controls</h2><p id="p_none_text">The controls appear here once the arm is armed.</p></div>
+
+    <div id="p_teach" hidden>
+      <div class="head"><h2>Move the gripper</h2><span id="jognote" class="note"></span><button class="q" data-pop="h_nudge">?</button></div>
+      <div class="keys">
+        <div class="kgroup">
+          <button class="key act" data-j="up" data-k="KeyQ"><kbd>Q</kbd><span>Up</span></button>
+          <button class="key act" data-j="fwd" data-k="KeyW"><kbd>W</kbd><span>Forward</span></button>
+          <button class="key act" data-j="down" data-k="KeyE"><kbd>E</kbd><span>Down</span></button>
+          <button class="key act" data-j="left" data-k="KeyA"><kbd>A</kbd><span>Left</span></button>
+          <button class="key act" data-j="back" data-k="KeyS"><kbd>S</kbd><span>Back</span></button>
+          <button class="key act" data-j="right" data-k="KeyD"><kbd>D</kbd><span>Right</span></button>
+        </div>
+        <div class="kgroup two">
+          <button class="key act" data-t="ccw" data-k="KeyZ"><kbd>Z</kbd><span>Turn ⟲</span></button>
+          <button class="key act" data-t="cw" data-k="KeyC"><kbd>C</kbd><span>Turn ⟳</span></button>
+          <button class="key act" id="gclose" data-k="KeyF"><kbd>F</kbd><span>Close</span></button>
+          <button class="key act" id="gopen" data-k="KeyR"><kbd>R</kbd><span>Open</span></button>
+        </div>
+      </div>
+      <div id="spacekey" class="spacekey" hidden><kbd>SPACE</kbd><span>hold to let the arm move</span></div>
+      <div class="row">
+        <div class="field"><label>Step</label><div class="seg" id="jogmm"><button data-v="1">1</button><button data-v="5" class="on">5</button><button data-v="20">20</button><button data-v="50">50</button><em>mm</em></div></div>
+        <div class="field"><label>Turn by</label><div class="seg" id="jogdeg"><button data-v="5">5</button><button data-v="15" class="on">15</button><button data-v="45">45</button><button data-v="90">90</button><em>°</em></div></div>
+      </div>
+      <div class="row"><button id="levelbtn" class="act">Point the gripper down</button><span id="tiltnote" class="note"></span></div>
+
+      <div class="head sep"><h2>Places</h2><button class="q" data-pop="h_places">?</button><span class="grow"></span>
+        <label class="mini" title="How far above the highest spot the arm travels between spots">Lift <input type="number" id="lift" value="80" min="30" max="200" step="5"> mm</label>
+        <button id="donebtn" class="go act">Done</button></div>
+      <div class="row">
+        <input type="text" id="spotname" value="A" size="5" maxlength="12" title="Name of this spot">
+        <button id="spotbtn" class="go act">Save spot here</button>
+        <div id="spots_edit" class="chips"></div>
+      </div>
+      <div class="row">
+        <button class="act" data-pop="h_table">Find the table…</button>
+        <button id="savedbtn" class="act" hidden></button><button id="demobtn" class="act" hidden>Use made-up spots</button>
+      </div>
+    </div>
+
+    <div id="p_run" hidden>
+      <div class="head">
+        <div class="tabs"><button id="tab_blocks" class="on">Blocks</button><button id="tab_cam">Camera</button></div>
+        <span class="grow"></span>
+        <label class="chk"><input type="checkbox" id="rehearse" checked> rehearse in the air</label>
+        <label class="chk"><input type="checkbox" id="step" checked> one step at a time</label>
+      </div>
+
+      <div id="pane_blocks">
+        <h3>One block</h3>
+        <div class="row">
+          <label class="mini col">Stands on<select id="thing"></select></label>
+          <label class="mini col">Put it on<select id="dst"></select></label>
+          <label class="mini col tiny">Moves<input type="number" id="count" value="1" min="1" max="500"></label>
+          <button id="gobtn" class="go">Go</button>
+        </div>
+        <h3>A tower <button class="q" data-pop="h_tower">?</button></h3>
+        <div class="row">
+          <label class="mini col">Stands on<select id="tw_on"></select></label>
+          <label class="mini col narrow">Block height<input type="number" id="tw_h" value="30" min="10" max="80" step="0.5"></label>
+          <label class="mini col narrow">On it now<input type="number" id="tw_n" value="0" min="0" max="6"></label>
+          <label class="mini col narrow">Rounds<input type="number" id="tw_r" value="1" min="1" max="50"></label>
+        </div>
+        <div class="row"><button id="tw_build" class="go">Build</button><button id="tw_down">Take down</button><button id="tw_loop">Build and take down, for the rounds</button></div>
+        <div id="tw_note" class="note clamp"></div>
+      </div>
+
+      <div id="pane_cam" hidden>
+        <div id="e_why" class="note"></div>
+        <div class="row">
+          <button id="lookbtn">Look</button>
+          <label class="mini col">Tower stands on<select id="e_on"></select></label>
+          <button id="e_build" class="go">Build a tower from what it sees</button>
+        </div>
+        <div id="e_plan" class="note clamp"></div>
+        <div id="e_seen" class="chips"></div>
+        <h3>Show the camera the table <button class="q" data-pop="h_show">?</button></h3>
+        <div class="row">
+          <label class="mini col">With this block<select id="e_kind"></select></label>
+          <label class="mini col narrow">Places<input type="number" id="e_n" value="12" min="8" max="20"></label>
+          <button id="e_show">Show the camera the table</button>
+        </div>
+      </div>
+
+      <div id="jobbox">
+        <div class="head sep"><div id="outcome" class="note"></div><span class="grow"></span><button id="nextbtn" class="go">Next step</button></div>
+        <ol id="steps"></ol>
+      </div>
+    </div>
+
+    <!-- small sheets that open over this card -->
+    <div class="pop" id="h_nudge"><h3>Nudging</h3><p>Forward is away from the robot's base. Up and down follow the gripper's own axis, so it should point at the table. Turning spins the gripper in place (only its last joint moves). Every nudge is slow and ends by itself if something is in the way.</p><p>Tilting the gripper down keeps the flange in place and swings the fingertips sideways: keep the space around the gripper free.</p></div>
+    <div class="pop" id="h_places"><h3>Showing it the places</h3><p>Stand a block where it should be picked up, nudge the open gripper around it (fingertips a few millimetres above the table) and press "Save spot here". Do the same for every other place, then press Done. A spot remembers how the gripper was turned there. The tilt of the gripper must be the same at every spot.</p><p>The lift is how far above the highest spot the arm travels between spots.</p></div>
+    <div class="pop" id="h_table"><h3>Find the table by itself</h3>
+      <div class="row">
+        <label class="mini col">Area across (mm)<input type="number" id="ft_w" value="200" min="100" max="400" step="10"></label>
+        <label class="mini col">Area deep (mm)<input type="number" id="ft_d" value="140" min="100" max="400" step="10"></label>
+      </div>
+      <div class="row"><button id="ftbtn" class="go act">Find the table</button><button id="fthere" class="act">The gripper is at the table now</button></div>
+      <p>Instead of teaching spots by hand. Bring the gripper over the middle of the area the blocks will lie in, pointing straight down. Hold a green or blue bar between the open jaws by its ends, lying level, the jaws across its short side, and press Close. Then press Find the table and hold the grip: the gripper comes straight down slowly until the bar meets the mat, lets go, and the label reads ARMED. Let go of the grip if it visibly pushes into the table. The tower will stand where the bar was put down.</p>
+      <p>If you have already brought the fingertips down onto the mat yourself, press "The gripper is at the table now" instead: nothing comes down, the bar is let go there.</p></div>
+    <div class="pop" id="h_tower"><h3>A tower</h3><p>Stand one block on every spot except the one the tower goes on, choose that spot, enter the block height and press Build. The first block goes down at the taught height and each next one a block height higher, let go a little above the block below. Take down returns every block to its own spot, top first.</p><p>Start with both boxes ticked: "rehearse in the air" does the whole travel without coming down, and "one step at a time" waits for Next step before every step.</p></div>
+    <div class="pop" id="h_show"><h3>Show the camera the table</h3><p>Once, and again whenever the camera or the table was moved. Teach spots at opposite corners of the area the blocks will lie in. Lay ONE bar or slab flat on a spot, jaws across its short side, say under "Stands on" (Blocks) which spot that is, and keep everything else off the mat. The arm carries the block to each place and steps aside for a picture; hold the grip throughout. Blocks must lie on the grey mat and must not touch each other.</p></div>
+  </section>
+</div>
+
+<div class="col right">
+  <section id="view" class="card stage">
+    <canvas id="gl"></canvas>
+    <div id="v_labels"></div>
+    <div class="over tl"><span id="v_arm" class="tag strong"></span><span id="v_err" class="tag"></span><span id="v_h" class="tag"></span><span id="v_lag" class="tag"></span><span id="v_mov" class="tag"></span><span id="v_read" class="tag bad" hidden></span></div>
+    <div class="over tr seg small" id="v_views"><button data-view="iso" class="on">3D</button><button data-view="front">Front</button><button data-view="side">Side</button><button data-view="top">Top</button></div>
+    <div class="over bl" id="v_caption"></div>
+    <div class="over br legend" id="v_legend"></div>
+    <div id="v_fail" class="empty" hidden></div>
+  </section>
+
+  <section id="cams" class="card">
+    <div id="camgrid"></div>
+    <div id="cam_none" class="empty" hidden></div>
+  </section>
+</div>
+</main>
+
+<footer>
+  <button id="logbtn" title="Show the whole log">Log</button>
+  <div id="logline"></div>
+  <a href="/classic" title="The older page: one long column, no model, no live pictures">classic page</a>
+</footer>
+<div id="logdrawer" hidden><pre id="log"></pre></div>
+
+<script>window.TOKEN = "__TOKEN__";</script>
+<script src="/web/app.js"></script>
+</body></html>

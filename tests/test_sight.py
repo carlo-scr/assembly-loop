@@ -174,8 +174,9 @@ def test_the_pages_camera_buttons_and_picture(ses):
             return e.code, json.loads(e.read())
 
     try:
-        page = urllib.request.urlopen(url + "/").read().decode()
-        assert all(x in page for x in ('id="lookbtn"', 'id="e_build"', 'id="e_show"', "/api/build_seen"))
+        for path in ("/", "/classic"):  # the page that fits one screen (its buttons are wired in web/app.js) and the older one
+            page = urllib.request.urlopen(url + path).read().decode() + (urllib.request.urlopen(url + "/web/app.js").read().decode() if path == "/" else "")
+            assert all(x in page for x in ('id="lookbtn"', 'id="e_build"', 'id="e_show"', "/api/build_seen")), path
         assert post("/api/look", {}, token="wrong")[0] == 403
         code, j = post("/api/look", {})
         assert code == 409 and "not been shown" in j["error"]
@@ -280,3 +281,17 @@ def test_a_gripper_brought_to_the_table_by_hand_is_taken_as_the_table(tmp_path):
     finally:
         alive[0] = False
         s.close()
+
+
+def test_the_live_pictures_know_the_block_finders_camera_and_the_stand_in_gets_a_drawn_one():
+    from assemblyloop import eyes, feeds
+
+    assert feeds.TABLE_CAMERA == eyes.SCENE_CAMERA  # the tile that says "finds the blocks" is the camera `look` opens
+    assert len({c["device"] for c in feeds.rig_cameras()}) == 6 and sum("right" in c["arms"] for c in feeds.rig_cameras()) == 4
+    axes = np.eye(3)
+    world = dict(axes=axes, centre=None, gripper=np.array([450.0, 0.0, 300.0]), open=True, spots={"A": np.array([430.0, -90.0, 120.0])}, things={"thing": np.array([430.0, -90.0, 120.0])})
+    for w in (None, world):
+        ok, im = feeds.MadeUp(lambda w=w: w, fps=200.0).read()
+        assert ok and im.shape == (480, 640, 3) and im.dtype == np.uint8
+    jpg, size = feeds.to_jpeg(np.zeros((1080, 1920, 3), np.uint8))  # a large picture is made smaller for the page
+    assert jpg[:2] == b"\xff\xd8" and size == (960, 540)

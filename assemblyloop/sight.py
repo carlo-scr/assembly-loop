@@ -55,6 +55,15 @@ class Sight:
                     self.say(f"{self.camera_path} is not readable: show the camera the table again")
         return eyes
 
+    def _grab(self):
+        """One picture from the camera that looks at the table. If the page is showing that camera live, its owner
+        lets go of it for the moment (a camera streams to one program at a time)."""
+        feeds = getattr(self, "feeds", None)
+        if feeds is None:
+            return self.camera.grab()
+        with feeds.borrow(getattr(self.camera, "device", None)):
+            return self.camera.grab()
+
     def catalogue(self):
         if not self.blocks_path.exists():
             raise Refused(f"there is no {self.blocks_path}: measure the blocks and write them down (see blocks.example.json)")
@@ -79,8 +88,8 @@ class Sight:
             eyes, cat = self._eyes(), self.catalogue()
             if self.setup is None:
                 raise Refused("the camera has not been shown the table yet")
-            setup, camera = self.setup, self.camera
-        im = camera.grab()
+            setup = self.setup
+        im = self._grab()
         tall = max(r.height for k in cat.kinds for r in k.rests())
         seen, unknown, blobs = eyes.look(im, setup.camera, setup.table, cat, setup.region((im.shape[1], im.shape[0]), tall))
         outside = [s for s in seen if not setup.inside(s.uv)]
@@ -159,7 +168,7 @@ class Sight:
                 far = max(corners, key=lambda k: float(np.linalg.norm(sp.grasp(k) - sp.grasp(at))))
                 self.guard.move_to(sp.above(self.guard.where()), self.P.lift, "go to the travel height")
                 self.guard.move_to(sp.above(sp.grasp(far)), self.P.travel, "step aside for the camera")
-                shots.append((sp.grasp(at).copy(), self.camera.grab()))
+                shots.append((sp.grasp(at).copy(), self._grab()))
 
             def finish():
                 setup, line = eyes.settle([p for p, _ in shots], [im for _, im in shots], block, axes, sp.turn(home),

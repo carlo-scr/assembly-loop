@@ -29,11 +29,13 @@ import numpy as np
 from .arms import ArmFault, FakeArm, XArm, run_fake_clock
 from .cycle import NothingHeld, Params, execute
 from .deadman import Deadman, QuestDeadman
+from .feeds import TABLE_CAMERA, MadeUp, same_device
 from .guard import Blocked, Guard, Limits, Refused, Released
 from .sight import Sight
 from .spots import Spots, demo_spots, plan_move, tool_axis
 
 JOG = dict(up=(0, 0, 1), down=(0, 0, -1), fwd=(1, 0, 0), back=(-1, 0, 0), left=(0, 1, 0), right=(0, -1, 0))  # in (forward, left, up)
+TOOL_MM = 172.0  # from the flange to the fingertips of UFACTORY's gripper. FOR DRAWING ONLY: every spot and limit is a flange position
 
 
 class Gate:
@@ -84,7 +86,7 @@ def jog_axes(rpy_deg):
 
 class Session(Sight):
     def __init__(self, arms=None, quest_port=6666, hand="right", spots_path="spots.json", log_dir="assembly_logs", probe=answers, say=None, fake_speed=1.0,
-                 guard_kw=None, limit_kw=None, camera=None, camera_path="camera.json", blocks_path="blocks.json", key_hold=False):
+                 guard_kw=None, limit_kw=None, camera=None, camera_path="camera.json", blocks_path="blocks.json", key_hold=False, feeds=None):
         self.arms, self.quest_port, self.hand, self.probe, self.fake_speed = arms or default_arms(), int(quest_port), hand, probe, float(fake_speed)
         # a move that should meet nothing goes in pieces of up to 80 mm (the guard's own default is 30) at up to 120 mm/s
         # a paused move waits 45 s for the switch (the guard's own default is 15) before the session is ended
@@ -95,6 +97,9 @@ class Session(Sight):
         self.reach, self._gen, self._quit = {}, 0, False
         self.ended = None
         self.key_hold = bool(key_hold)  # the space bar of the page may be the hold-to-run switch of a REAL arm too (asked for when the program is started)
+        self.feeds = feeds  # live pictures for the page (`feeds.Feeds`), or None: no pictures
+        if feeds is not None and "stand-in" in self.arms:
+            feeds.add(dict(id="made_up", label="Made-up camera", arms=("stand-in",), make=lambda: MadeUp(self._made_up_world)))
         self._sight_init(camera, camera_path, blocks_path)
         self._reset()
         threading.Thread(target=self._probe_loop, daemon=True).start()
@@ -163,6 +168,8 @@ class Session(Sight):
     def close(self):
         self._quit = True
         self.end()
+        if self.feeds is not None:
+            self.feeds.close()
 
     # ------------------------------------------------------------------ OFF <-> DISARMED
     def start(self, choice, hold=None):
@@ -649,6 +656,77 @@ class Session(Sight):
             if latched:
                 threading.Thread(target=self.end, args=(latched,), daemon=True).start()
 
+    # ------------------------------------------------------------------ what the dashboard draws (nothing here moves or judges anything)
+    def view(self):
+        """Ten times a second, for the page's model of the arm: the joint angles the controller publishes anyway (no
+        round trip is made for a drawing), and where the gripper last came to rest."""
+        arm, g = self.arm, self.guard
+        if not self.connected or arm is None:
+            return dict(connected=False)
+        try:
+            grip = g.counts if g is not None and g.counts is not None else getattr(arm, "counts", None)
+            return dict(connected=True, joints=[round(float(v), 2) for v in arm.joints_view()], grip=grip, moving=bool(arm.moving_now()))
+        except Exception as e:  # noqa: BLE001  a drawing must never take the program down
+            return dict(connected=True, joints=None, error=f"{type(e).__name__}: {e}")
+
+    def scene_state(self):
+        """What is around the arm, for the page's model, in the arm's base frame [mm]: which way the gripper's 'up'
+        points, the box the guard keeps the flange in, where the steps of the current move lead, the stand-in's
+        blocks, and the blocks the camera made out. Spots, box and path are FLANGE positions; the page draws them
+        `tool_mm` further along the gripper, where the fingertips are."""
+        out = dict(tool_mm=TOOL_MM, up=None, box=None, path=None, at=None, things=[], seen=[])
+        if not self.connected:
+            return out
+        sp = self.draft if self.teaching else self.spots
+        if sp is not None and sp.rpy is not None:
+            up = sp.up
+        elif "rpy" in self.snap:
+            up = -tool_axis(self.snap["rpy"])
+        else:
+            up = -self.down()
+        out["up"] = [float(v) for v in up]
+        g, j = self.guard, self.job
+        if g is not None and self.gate.armed:
+            lim = g.lim
+            out["box"] = dict(origin=lim.origin.tolist(), axes=lim.axes.tolist(), lo=lim.lo.tolist(), hi=lim.hi.tolist())
+        if j is not None and j.get("kind") == "move" and self.worker is not None:
+            out["path"], out["at"] = [None if x.get("kind") != "move" else [round(float(v), 1) for v in x["to"]] for x in j["steps"]], j["i"]
+        if self.fake:
+            out["things"] = [dict(name=k, xyz=[round(float(x), 1) for x in v]) for k, v in sorted(self.arm.bricks.items())]
+        s, setup = self.sight, self.setup
+        if s is not None and setup is not None:
+            for b in s["seen"]:
+                a = np.radians(b.angle)
+                out["seen"].append(dict(name=b.name, xyz=[round(float(v), 1) for v in setup.table.point(b.uv[0], b.uv[1], setup.w_grasp)],
+                                        along=[float(v) for v in setup.table.axes @ np.array([np.cos(a), np.sin(a), 0.0])],
+                                        size=[b.rest.long, b.rest.short, b.rest.height], round=bool(b.rest.round), colour=b.kind.colour, stale=bool(s["stale"])))
+        return out
+
+    def frames(self, after=0, side=None):
+        """The live pictures of the cameras that belong to the arm of this session (before a session: to the arm
+        picked on the page). Returns what the page is told about each camera, and the new pictures themselves."""
+        if self.feeds is None:
+            return dict(on=False, why="the live pictures are switched off", seq=int(after), cams=[]), []
+        why = self.feeds.why_not()
+        if why:
+            return dict(on=False, why=why, seq=int(after), cams=[]), []
+        seq, cams = self.feeds.frames(self.chosen if self.connected else (side if side in self.arms else None), int(after))
+        look = getattr(self.camera, "device", None) or TABLE_CAMERA
+        pictures = [c.pop("jpg") for c in cams]
+        for c, jpg in zip(cams, pictures):
+            c["len"], c["finds"] = len(jpg), same_device(c.pop("device"), look)
+        return dict(on=True, why="", seq=seq, cams=cams), pictures
+
+    def _made_up_world(self):
+        """What the stand-in's made-up camera draws (None when there is no stand-in session)."""
+        arm = self.arm
+        if arm is None or not self.fake:
+            return None
+        sp = self.draft if self.teaching else self.spots
+        spots = {} if sp is None else {k: v.copy() for k, v in sp.at.items()}
+        return dict(axes=jog_axes(arm.rpy), centre=np.mean(list(spots.values()), 0) if spots else None, gripper=arm.p.copy(), open=arm.counts >= 800, spots=spots,
+                    things={k: v.copy() for k, v in arm.bricks.items()})
+
     # ------------------------------------------------------------------ what the dashboard shows
     def phase(self):
         if not self.connected:
@@ -683,7 +761,9 @@ class Session(Sight):
             sp = self.draft if self.teaching else self.spots
             spots = [] if sp is None else [dict(name=k, mm=[round(float(x), 1) for x in v], yaw=round(float(sp.turn(k)[2]), 0)) for k, v in sorted(sp.at.items())]
             out = dict(phase=ph, hint=self.hint(), ended=self.ended, fake=self.fake, hold=self.hold, chosen=self.chosen, connected=self.connected, key_hold=self.key_hold,
-                       arms=[dict(key=k, label=a["label"], ip=a.get("ip"), answers=None if a.get("ip") is None else self.reach.get(k)) for k, a in self.arms.items()],
+                       arms=[dict(key=k, label=a["label"], ip=a.get("ip"), answers=None if a.get("ip") is None else self.reach.get(k),
+                                  up=[-float(v) for v in a.get("down", (0.0, 0.0, -1.0))]) for k, a in self.arms.items()],
+                       scene=self.scene_state(), feeds=self.feeds is not None,
                        calibration=dict(teaching=self.teaching, done=self.calibrated, spots=spots, lift_mm=None if sp is None else sp.lift, saved=self.saved(), note=self.note,
                                         busy=bool(self.teaching and self.worker is not None)),
                        thing_at=self.thing_at, log=list(self.lines)[-40:], stack=self.stack, drop_mm=self.P.drop_mm, eye=self.sight_state(),
