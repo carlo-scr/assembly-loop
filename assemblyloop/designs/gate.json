@@ -1,0 +1,42 @@
+{
+ "name": "Gate",
+ "note": "Two bars standing on end, a plank across, a cylinder on top.",
+ "blocks": [
+  {
+   "id": "b1",
+   "kind": "yellow bar",
+   "rest": "on end",
+   "x": 0,
+   "y": 27,
+   "angle": 0,
+   "z": 0.0
+  },
+  {
+   "id": "b2",
+   "kind": "yellow bar",
+   "rest": "on end",
+   "x": 0,
+   "y": -27,
+   "angle": 0,
+   "z": 0.0
+  },
+  {
+   "id": "b3",
+   "kind": "green plank",
+   "rest": "flat",
+   "x": 0,
+   "y": 0,
+   "angle": 90,
+   "z": 57.0
+  },
+  {
+   "id": "b4",
+   "kind": "red cylinder",
+   "rest": "upright",
+   "x": 0,
+   "y": 0,
+   "angle": 0,
+   "z": 69.7
+  }
+ ]
+}

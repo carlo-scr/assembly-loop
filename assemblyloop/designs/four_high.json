@@ -1,0 +1,42 @@
+{
+ "name": "Four high",
+ "note": "One of each shape, the widest at the bottom.",
+ "blocks": [
+  {
+   "id": "b1",
+   "kind": "green plank",
+   "rest": "flat",
+   "x": 0,
+   "y": 0,
+   "angle": 0,
+   "z": 0.0
+  },
+  {
+   "id": "b2",
+   "kind": "red bar",
+   "rest": "flat",
+   "x": 0,
+   "y": 0,
+   "angle": 90,
+   "z": 12.7
+  },
+  {
+   "id": "b3",
+   "kind": "blue cube",
+   "rest": "flat",
+   "x": 0,
+   "y": 0,
+   "angle": 0,
+   "z": 38.1
+  },
+  {
+   "id": "b4",
+   "kind": "yellow cylinder",
+   "rest": "upright",
+   "x": 0,
+   "y": 0,
+   "angle": 0,
+   "z": 63.5
+  }
+ ]
+}

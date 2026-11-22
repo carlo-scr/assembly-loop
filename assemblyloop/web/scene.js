@@ -174,6 +174,13 @@ export async function start(host) {
         st.feeds.slice(st.n).forEach(n => { if (at(n)) live.add(cube(F.tipOf(at(n).mm), h, accent, 0.4)); });
       } else if (state.thing_at && at(state.thing_at)) live.add(cube(F.tipOf(at(state.thing_at).mm), 30, accent, 0.4));
     }
+    (s.plan || []).forEach(t => {  // a design being built: where each block still goes, the next one clearest
+      if (t.done) return;
+      const x = V(t.along).normalize(), y = new THREE.Vector3().crossVectors(F.up, x), p = F.onTable(t.xyz).addScaledVector(F.up, t.base + t.size[2] / 2 + 1);
+      const m = block(t.round ? [t.size[0], t.size[0], t.size[2]] : t.size, PAINT[t.colour] || 0x9aa2af, p, x, y, F.up, t.next ? 0.45 : 0.16, t.round);
+      m.castShadow = false; live.add(m);
+      if (t.next) live.add(put(new THREE.LineSegments(new THREE.EdgesGeometry(m.geometry), new THREE.LineBasicMaterial({color: accent})), m.matrix));
+    });
     s.seen.forEach(b => {  // what the camera made out at the last look
       const x = V(b.along).normalize(), y = new THREE.Vector3().crossVectors(F.up, x), p = F.onTable(b.xyz).addScaledVector(F.up, b.size[2] / 2 + 2);
       const solid = block(b.round ? [b.size[0], b.size[0], b.size[2]] : b.size, PAINT[b.colour] || 0x9aa2af, p, x, y, F.up, b.stale ? 0.3 : 0.9, b.round);
@@ -203,7 +210,7 @@ export async function start(host) {
     const turned = setUp(a.up) || side !== sideNow; sideNow = side;
     if (!s.connected) { goal.splice(0, 7, ...REST); gripGoal = 0; }
     const A = JSON.stringify([s.connected, s.scene.up, s.scene.box, s.calibration.spots, s.scene.tool_mm, s.stack && s.stack.on]);
-    const B = JSON.stringify([s.connected, s.scene.path, s.scene.at, s.scene.things, s.scene.seen, s.thing_at, s.stack, s.calibration.spots]);
+    const B = JSON.stringify([s.connected, s.scene.path, s.scene.at, s.scene.things, s.scene.seen, s.scene.plan, s.thing_at, s.stack, s.calibration.spots]);
     const hadTable = tableKnown;
     if (A !== sigA || turned) { sigA = A; drawStill(); need = true; }
     if (B !== sigB || turned || (s.scene.path && s.arm && s.arm.moving)) { sigB = B; drawLive(); need = true; }

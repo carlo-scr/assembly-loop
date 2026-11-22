@@ -1,0 +1,42 @@
+{
+ "name": "Bridge",
+ "note": "Two cubes and a plank across them, a cube on top.",
+ "blocks": [
+  {
+   "id": "b1",
+   "kind": "red cube",
+   "rest": "flat",
+   "x": 0,
+   "y": 28,
+   "angle": 0,
+   "z": 0.0
+  },
+  {
+   "id": "b2",
+   "kind": "red cube",
+   "rest": "flat",
+   "x": 0,
+   "y": -28,
+   "angle": 0,
+   "z": 0.0
+  },
+  {
+   "id": "b3",
+   "kind": "blue plank",
+   "rest": "flat",
+   "x": 0,
+   "y": 0,
+   "angle": 90,
+   "z": 25.4
+  },
+  {
+   "id": "b4",
+   "kind": "yellow cube",
+   "rest": "flat",
+   "x": 0,
+   "y": 0,
+   "angle": 0,
+   "z": 38.1
+  }
+ ]
+}

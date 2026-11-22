@@ -86,7 +86,7 @@ def jog_axes(rpy_deg):
 
 class Session(Sight):
     def __init__(self, arms=None, quest_port=6666, hand="right", spots_path="spots.json", log_dir="assembly_logs", probe=answers, say=None, fake_speed=1.0,
-                 guard_kw=None, limit_kw=None, camera=None, camera_path="camera.json", blocks_path="blocks.json", key_hold=False, feeds=None):
+                 guard_kw=None, limit_kw=None, camera=None, camera_path="camera.json", blocks_path="blocks.json", key_hold=False, feeds=None, designs_dir="designs"):
         self.arms, self.quest_port, self.hand, self.probe, self.fake_speed = arms or default_arms(), int(quest_port), hand, probe, float(fake_speed)
         # a move that should meet nothing goes in pieces of up to 80 mm (the guard's own default is 30) at up to 120 mm/s
         # a paused move waits 45 s for the switch (the guard's own default is 15) before the session is ended
@@ -100,7 +100,7 @@ class Session(Sight):
         self.feeds = feeds  # live pictures for the page (`feeds.Feeds`), or None: no pictures
         if feeds is not None and "stand-in" in self.arms:
             feeds.add(dict(id="made_up", label="Made-up camera", arms=("stand-in",), make=lambda: MadeUp(self._made_up_world)))
-        self._sight_init(camera, camera_path, blocks_path)
+        self._sight_init(camera, camera_path, blocks_path, designs_dir)
         self._reset()
         threading.Thread(target=self._probe_loop, daemon=True).start()
 
@@ -599,7 +599,7 @@ class Session(Sight):
                 at, dst = leg["src"], leg["dst"]
                 text = leg.get("text") or f"{at} to {dst}"
                 here = g.where()
-                steps = plan_move(sp, at, dst, here, self.P, rehearse=job["rehearse"], src_up=leg["su"], dst_up=leg["du"])
+                steps = plan_move(sp, at, dst, here, self.P, rehearse=job["rehearse"], src_up=leg["su"], dst_up=leg["du"], release_counts=leg.get("release"))
                 top = float(here @ sp.up) + 1.0  # the arm may start above the travel height (after a tower): it comes down first
                 g.lim = sp.limits(floor_w=min(float(here @ sp.up), sp.travel_w()) - 1.0, ceil_w=top, **self.limit_kw) if job["rehearse"] else sp.limits(ceil_w=top, **self.limit_kw)
                 with self.lock:
@@ -620,7 +620,7 @@ class Session(Sight):
                 job["done"] = k + 1
                 if not job["rehearse"]:
                     if tower:
-                        self.stack = {**self.stack, "n": self.stack["n"] + (1 if dst == self.stack["on"] else -1)}
+                        self.stack = {**self.stack, "n": self.stack["n"] + (1 if leg.get("adds", dst == self.stack["on"]) else -1)}
                     else:
                         self.thing_at = dst
                 if leg.get("then"):
@@ -674,7 +674,7 @@ class Session(Sight):
         points, the box the guard keeps the flange in, where the steps of the current move lead, the stand-in's
         blocks, and the blocks the camera made out. Spots, box and path are FLANGE positions; the page draws them
         `tool_mm` further along the gripper, where the fingertips are."""
-        out = dict(tool_mm=TOOL_MM, up=None, box=None, path=None, at=None, things=[], seen=[])
+        out = dict(tool_mm=TOOL_MM, up=None, box=None, path=None, at=None, things=[], seen=[], plan=[])
         if not self.connected:
             return out
         sp = self.draft if self.teaching else self.spots
@@ -691,6 +691,8 @@ class Session(Sight):
             out["box"] = dict(origin=lim.origin.tolist(), axes=lim.axes.tolist(), lo=lim.lo.tolist(), hi=lim.hi.tolist())
         if j is not None and j.get("kind") == "move" and self.worker is not None:
             out["path"], out["at"] = [None if x.get("kind") != "move" else [round(float(v), 1) for v in x["to"]] for x in j["steps"]], j["i"]
+        if j is not None and j.get("plan") and (self.worker is not None or j["done"] < j["total"]):
+            out["plan"] = [dict(e, done=k < j["done"], next=k == j["done"]) for k, e in enumerate(j["plan"])]  # a design being built: where every block goes
         if self.fake:
             out["things"] = [dict(name=k, xyz=[round(float(x), 1) for x in v]) for k, v in sorted(self.arm.bricks.items())]
         s, setup = self.sight, self.setup

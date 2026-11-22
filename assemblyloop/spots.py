@@ -138,9 +138,10 @@ def demo_spots():
     return s
 
 
-def plan_move(spots, src, dst, here, P, rehearse=False, src_up=0.0, dst_up=0.0):
+def plan_move(spots, src, dst, here, P, rehearse=False, src_up=0.0, dst_up=0.0, release_counts=None):
     """Steps to take the thing at `src` and put it down at `dst`, starting from wherever the arm is (`here`).
     `src_up` / `dst_up` [mm] raise the pick-up / the put-down above the taught spot (the levels of a tower).
+    `release_counts`: let go by opening only this far (a design's block, whose neighbours stand close), not fully.
     A rehearsal does the same travel at the travel height and never comes down."""
     if src == dst:
         raise Refused("from and to are the same spot")
@@ -166,7 +167,7 @@ def plan_move(spots, src, dst, here, P, rehearse=False, src_up=0.0, dst_up=0.0):
     if not rehearse:
         S += [dict(name=f"lower it onto {nd}", kind="move", to=gd, speed=P.slow, stall_mm=P.stall_mm, rest_ok_mm=P.rest_ok_mm),
               dict(name="read the put-down", kind="read"),
-              dict(name="let go", kind="grip", counts=P.open_counts),
+              dict(name="let go", kind="grip", counts=P.open_counts if release_counts is None else int(min(P.open_counts, max(P.shut_counts, release_counts)))),
               dict(name="lift clear", kind="move", to=hd, speed=P.lift)]
     else:
         S += [dict(name="open the gripper (in the air)", kind="grip", counts=P.open_counts)]

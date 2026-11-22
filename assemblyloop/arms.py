@@ -264,7 +264,7 @@ class FakeArm:
 
     def grip(self, counts):
         self.log.append(("grip", self.t, int(counts)))
-        if counts >= 800:  # open: a held brick stays where it is
+        if counts >= 800 or (self.holding is not None and counts > self.counts + 20):  # opened past what it holds: a held brick stays where it is
             self.counts, self.holding = int(counts), None
             return self.counts
         for name, at in self.bricks.items():

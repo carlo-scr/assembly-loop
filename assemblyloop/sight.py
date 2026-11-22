@@ -8,6 +8,10 @@
   build_seen   a tower on a taught spot from the blocks of the last look, in the order `blocks.plan_tower` gives.
                Every seen block becomes a spot for this one job, so the arm takes it exactly as it takes a block
                from a taught spot: through the guard, only while the grip is held, lowering watched for contact.
+  build_design a saved design (`design.py`, drawn in the designer) on a taught spot, from the blocks of the last
+               look: every block of the design is matched to a seen block of the same kind lying the same way, and
+               is put down where the design says, turned as it says, step by step in the design's order. Nothing is
+               built unless `design.check` finds every step buildable and standing.
 
 The camera never widens where the arm may go: blocks outside the part of the table it was shown are left where they
 are, and the guard's box is the one around the taught spots and those blocks.
@@ -34,8 +38,8 @@ def spin(rpy_deg, up, deg):
 
 
 class Sight:
-    def _sight_init(self, camera=None, camera_path="camera.json", blocks_path="blocks.json"):
-        self.camera, self.camera_path, self.blocks_path = camera, Path(camera_path), Path(blocks_path)
+    def _sight_init(self, camera=None, camera_path="camera.json", blocks_path="blocks.json", designs_dir="designs"):
+        self.camera, self.camera_path, self.blocks_path, self.designs_dir = camera, Path(camera_path), Path(blocks_path), Path(designs_dir)
         self.setup, self.sight, self._setup_read = None, None, False
 
     # ------------------------------------------------------------------ what is there to work with
@@ -226,6 +230,119 @@ class Sight:
             self.job = dict(steps=[], i=None, waiting=False, outcome=None, done=0, total=len(legs), src=legs[0]["src"], dst=on, rehearse=bool(rehearse), step=bool(step),
                             fixed=None, kind="move", legs=legs, spots=sp, text=legs[0]["text"], tower=True)
             self.say(f"a tower of {len(levels)} on {on}, {levels[-1]['top_mm']:.0f} mm high: " + ", ".join(lv["block"].name for lv in levels))
+            self._next.clear()
+            self.worker = threading.Thread(target=self._work, daemon=True)
+            self.worker.start()
+
+    # ------------------------------------------------------------------ designs (the designer page; no arm needed)
+    def design_catalogue(self):
+        """What the designer may build with: the kinds of block, every way each can lie, and the gripper's sizes."""
+        from . import design as D
+
+        cat, path = D.catalogue_for_design(self.blocks_path)
+        kinds = [dict(name=k.name, shape=k.shape, size=list(k.size), colour=k.colour,
+                      rests=[dict(name=r.name, height=r.height, long=r.long, short=r.short, round=r.round, rolls=r.rolls) for r in k.rests()]) for k in cat.kinds]
+        return dict(kinds=kinds, finger_mm=cat.finger_mm, jaw_mm=cat.jaw_mm, source=path.name, example=path.name != self.blocks_path.name, gripper=D.GRIPPER,
+                    reach_mm=D.REACH_MM, height_mm=min(D.HEIGHT_MM, self._tower_max()), shaky_deg=D.SHAKY_DEG, max_tilt_deg=D.MAX_TILT_DEG)
+
+    def design_list(self):
+        from . import design as D
+
+        return D.listing(self.designs_dir)
+
+    def design_get(self, name):
+        from . import design as D
+
+        return D.load(self.designs_dir, name).to_dict()
+
+    def design_check(self, d):
+        from . import design as D
+
+        cat, _ = D.catalogue_for_design(self.blocks_path)
+        return D.check(D.Design.from_dict(d), cat, max_mm=min(D.HEIGHT_MM, self._tower_max()))
+
+    def design_save(self, d):
+        from . import design as D
+
+        dz = D.Design.from_dict(d)
+        dz.name = D.check_name(dz.name)
+        f = D.save(self.designs_dir, dz)
+        self.say(f"design {dz.name!r} saved in {f}")
+        return dict(name=dz.name, file=str(f))
+
+    def design_order(self, d):
+        from . import design as D
+
+        cat, _ = D.catalogue_for_design(self.blocks_path)
+        return D.find_order(D.Design.from_dict(d), cat).to_dict()
+
+    # ------------------------------------------------------------------ build a design from what the camera sees
+    def build_design(self, name, on, rehearse=False, step=False):
+        """The saved design `name`, built on the taught spot `on` from the blocks of the last look."""
+        from . import design as D
+
+        with self.lock:
+            if self.phase() != "ARMED":
+                raise Refused(f"a design can only be built when ARMED (now: {self.phase()})")
+            self._eyes()
+            cat, why = self.catalogue(), self._setup_fits()
+            if why:
+                raise Refused(why)
+            s, setup = self.sight, self.setup
+            if s is None or s["stale"] or time.time() - s["t"] > 300.0:
+                raise Refused("press Look first: the arm builds from a picture taken after the last move, at most five minutes old")
+            self.spots.grasp(on)
+            dz = D.load(self.designs_dir, name)
+            rep = D.check(dz, cat, max_mm=self._tower_max())
+            if not rep["ok"]:
+                first = next((f"step {k + 1}: {b['problems'][0]}" for k, b in enumerate(rep["blocks"]) if b["problems"]), None)
+                raise Refused(f"the design {dz.name!r} cannot be built ({first or (rep['problems'] or ['it does not stand'])[0]}): open it in the designer")
+            parts = D.resolve(dz, cat)
+            table, up = setup.table, self.spots.up
+            base = table.coords(self.spots.grasp(on))[:2]
+            fwd = np.array([1.0, 0.0, 0.0]) if abs(up[0]) < 0.9 else np.array([0.0, 1.0, 0.0])  # the design's forward: away from the base, level
+            fwd = fwd - (fwd @ up) * up
+            fwd /= np.linalg.norm(fwd)
+            f2, l2 = (table.axes.T @ fwd)[:2], (table.axes.T @ np.cross(up, fwd))[:2]
+            uv = lambda x, y: base + x * f2 + y * l2  # noqa: E731  a point of the design on the table
+            to_design = lambda q: np.array([(np.asarray(q) - base) @ f2, (np.asarray(q) - base) @ l2])  # noqa: E731
+            ang = lambda deg: float(np.degrees(np.arctan2(*(np.cos(np.radians(deg)) * f2 + np.sin(np.radians(deg)) * l2)[::-1])))  # noqa: E731  a direction of the design, as a direction of the table
+            for b in s["seen"]:  # nothing may lie where the design goes, nor where the fingers reach beside it
+                q, a = to_design(b.uv), np.radians(b.angle)
+                d = np.cos(a) * table.axes[:, 0] + np.sin(a) * table.axes[:, 1]  # its long side, as a direction of the arm
+                deg = float(np.degrees(np.arctan2(d @ np.cross(up, fwd), d @ fwd)))
+                there = D.circle(q[0], q[1], b.rest.long) if b.rest.round else D.rect(q[0], q[1], b.rest.long, b.rest.short, deg)
+                if any(D.gap(there, p.poly) < D.CLEAR_MM for p in parts):
+                    raise Refused(f"the {b.name} lies where the design goes on {on}, or within {D.CLEAR_MM:.0f} mm of it: move it away, then Look again")
+            pool, legs, plan, missing = sorted(s["seen"], key=lambda b: float(np.linalg.norm(np.asarray(b.uv) - base))), [], [], {}
+            sp = copy.deepcopy(self.spots)
+            for k, p in enumerate(parts):
+                b = next((b for b in pool if b.kind.name == p.kind.name and b.rest.name == p.rest.name), None)
+                if b is None:
+                    missing[(p.kind.name, p.rest.name)] = missing.get((p.kind.name, p.rest.name), 0) + 1
+                    continue
+                pool.remove(b)
+                src, dst = (b.name if b.name not in self.spots.at else b.name + " (seen)"), f"design place {k + 1}"
+                t = b.rest.turns
+                turn_src = 0.0 if not t else (b.angle - setup.angle_ref + t / 2.0) % t - t / 2.0
+                turn_dst = (ang(rep["blocks"][k]["grip_deg"]) - setup.angle_ref + 90.0) % 180.0 - 90.0  # the gripper is the same turned by half a turn
+                sp.at[src], sp.rot[src] = table.point(b.uv[0], b.uv[1], setup.w_grasp), spin(setup.rpy_ref, up, turn_src)
+                sp.at[dst], sp.rot[dst] = table.point(*uv(p.block.x, p.block.y), setup.w_grasp), spin(setup.rpy_ref, up, turn_dst)
+                legs.append(dict(src=src, dst=dst, su=p.hold, du=p.z + p.hold + (self.P.drop_mm if p.z > D.TOUCH_MM else 0.0), adds=True,
+                                 release=int(round(10.0 * rep["blocks"][k]["release_mm"])), text=f"{b.name} to step {k + 1} of {len(parts)}"))
+                a = np.radians(ang(p.block.angle))
+                plan.append(dict(name=p.kind.name, xyz=[round(float(v), 1) for v in sp.at[dst]], base=round(p.z, 1), along=[float(v) for v in table.axes @ np.array([np.cos(a), np.sin(a), 0.0])],
+                                 size=[p.rest.long, p.rest.short, p.rest.height], round=bool(p.rest.round), colour=p.kind.colour))
+            if missing:
+                raise Refused("lay these out on the mat, apart from each other, then Look again: " + ", ".join(f"{n} x {k} ({r})" for (k, r), n in sorted(missing.items())))
+            sp.extra = rep["height_mm"] + max(p.hold for p in parts)  # a carried block clears what is built, however low it hangs
+            self.stack, self.thing_at = dict(on=on, block_mm=None, n=0, of=len(legs), feeds=[leg["src"] for leg in legs], design=dz.name), None
+            s["stale"] = True
+            self.job = dict(steps=[], i=None, waiting=False, outcome=None, done=0, total=len(legs), src=legs[0]["src"], dst=legs[0]["dst"], rehearse=bool(rehearse), step=bool(step),
+                            fixed=None, kind="move", legs=legs, spots=sp, text=legs[0]["text"], tower=True, plan=plan)
+            low = rep["tilt_deg"]
+            self.say(f"building the design {dz.name!r} on {on}: {len(legs)} blocks, {rep['height_mm']:.0f} mm high, holds a tilt of {low:.0f} degrees"
+                     + (" (SHAKY: a bump may topple it)" if low < D.SHAKY_DEG else ""))
             self._next.clear()
             self.worker = threading.Thread(target=self._work, daemon=True)
             self.worker.start()

@@ -9,7 +9,7 @@ grip of a Quest controller.
 Today it moves wooden blocks between places taught by hand and stacks them into a tower. Press-fit bricks and cables
 are meant to follow on the same base.
 
-> **Status, 21 November 2026.** Everything here is tested on a stand-in arm (62 tests). On the real right arm, a session,
+> **Status, 21 November 2026.** Everything here is tested on a stand-in arm (74 tests). On the real right arm, a session,
 > the Quest grip and nudging have run; moving blocks, towers and the camera have not. The first session on the arm
 > follows the rungs below, one at a time. The page that fits one screen (the model of the arm, the live pictures) has
 > run on the stand-in arm only: its cameras have not been opened on the rig yet. The older page is kept at `/classic`.
@@ -84,6 +84,35 @@ Good to know:
 A session writes `assembly_logs/guard.jsonl` (everything the arm was asked to do, and why each move ended),
 `assembly_logs/moves.jsonl` (one line per block moved) and `spots.json` (the taught places). None of these are
 tracked by git.
+
+## Designing what to build
+
+`http://127.0.0.1:8777/build` is the designer. It needs no arm and no session.
+
+- **Right:** every kind of block in `blocks.json` (or the example sizes, if there is none), in its colours. Drag one
+  onto the mat. It drops straight down until it meets something, as when the arm puts it down.
+- **Left:** the block you clicked: its colour, how it lies, turning (R, Q, E), moving (arrow keys), copy, remove.
+  Below it the steps, in the order the arm puts the blocks down, and whether each step stands.
+- **Middle:** the mat around the spot it will be built on. The robot is on the near side. Drag the slider at the
+  bottom, or press ▶, to see it being built step by step.
+
+After every change the program checks every step of the build:
+
+- **Does it stand?** Wood on wood, nothing glued: forces that only push, through faces that touch, must carry
+  every block's weight. The bars show how far the table could tilt before something tips over. Below 4° the design
+  is called shaky. A design that stands only once finished is refused: the arm builds it step by step.
+- **Can the arm do it?** Each block comes straight down onto blocks already there, with nothing over it. The jaws
+  close across its short side, and the fingers need room on both sides when they let go: the selected block shows
+  where they go, in red if they would hit something. Square and round blocks are taken the other way round when that
+  leaves room. "Order for the robot" finds an order in which every step stands, if there is one.
+- **Limits:** 150 mm from the spot each way, and about 220 mm high.
+
+Saved designs go to `designs/` (not tracked by git). Four examples come with the program. To build one: on the
+dashboard, Camera tab, press Look, then under "A design" choose it and the spot, and press "Build the design". Every
+block is taken from the last look (the same kind, lying the same way), and let go opening only 10 mm past each side.
+Nothing is built unless the check passes. Lay the blocks out on the mat at least 30 mm from where the design goes.
+
+The gripper's sizes come from UFACTORY's model of it, not from measuring the rig.
 
 ## What keeps the arm safe
 
@@ -179,12 +208,15 @@ assemblyloop/
   spots.py      places taught by hand; moving a block between them; the levels of a tower
   blocks.py     the kinds of block (blocks.json), how each can lie, and which goes onto a tower next
   eyes.py       the camera: coloured patches, the camera fitted to the table, which block each patch is
-  sight.py      the camera in a session: show it the table, look, build a tower from what it sees
+  sight.py      the camera in a session: show it the table, look, build a tower or a design from what it sees
+  design.py     designs: what to build, block by block; whether each step stands and the gripper fits
   plate.py      a stud plate taught from three poses (press-fit bricks; command line only for now)
   session.py    one session: OFF, DISARMED, AWAITING CALIBRATION, ARMED, RUNNING
   feeds.py      the live pictures: one owner per camera, lent to the block finder for its own picture
   dashboard.py  the local web server of a session, and the older page
+  designs/      the example designs
   web/          the page that fits one screen (index.html, app.css, app.js), the model of the arm (scene.js),
+                the designer (build.html, build.css, build.js),
                 three.js (vendor/, MIT) and UFACTORY's xArm 7 meshes (xarm7/, BSD-3-Clause, from MuJoCo Menagerie)
 tests/          the safety rules and the session, on the stand-in arm
 ```
