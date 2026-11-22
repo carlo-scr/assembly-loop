@@ -15,6 +15,7 @@ are, and the guard's box is the one around the taught spots and those blocks.
 from __future__ import annotations
 
 import copy
+import json
 import threading
 import time
 from pathlib import Path
@@ -123,8 +124,11 @@ class Sight:
         return 300.0 - (self.spots.lift if self.spots is not None else 80.0)  # the travel height stays within what the guard has always allowed
 
     # ------------------------------------------------------------------ show the camera the table
-    def show_table(self, kind, n=12, step=False):
-        """Fit the camera: carry the block that lies on the spot `thing_at` to `n` places and photograph each."""
+    def show_table(self, kind, n=12, step=False, grid_mm=60.0):
+        """Fit the camera: carry the block that lies on the spot `thing_at` to up to `n` places and photograph each.
+        The places are not laid out beforehand. They go outwards from where the block lies, `grid_mm` apart, and a
+        place is used only if the arm can reach it and, as far as the pictures taken so far tell, it is on the grey
+        mat. So the area that comes out is as large as the arm and the mat allow, wherever the block was put."""
         with self.lock:
             if self.phase() != "ARMED":
                 raise Refused(f"the camera can be shown the table when ARMED (now: {self.phase()})")
@@ -133,49 +137,110 @@ class Sight:
                 raise Refused("show the camera the table with a bar or a slab: a cylinder on its end has no direction")
             if self.thing_at is None:
                 raise Refused("say first on which spot the block lies (One block: 'The block stands on')")
+            self._empty_handed("showing the camera the table")
             n = int(n)
             if not 8 <= n <= 20:
                 raise Refused("between 8 and 20 places")
-            sp, home = copy.deepcopy(self.spots), self.thing_at
-            axes = sp.limits().axes
-            C = np.array([axes.T @ p for p in sp.at.values()])
-            lo, hi = C[:, :2].min(0), C[:, :2].max(0)
-            if min(hi - lo) < 80.0:
-                raise Refused("the taught spots are almost on one line: teach spots at opposite corners of the area the blocks will lie in (at least 80 mm apart each way)")
-            nu = max(3, int(round(np.sqrt(n * (hi[0] - lo[0]) / (hi[1] - lo[1])))))
-            nv = max(3, int(np.ceil(n / nu)))
-            w, here, names = float(sp.grasp(home) @ sp.up), axes.T @ sp.grasp(home), []
-            for i, u in enumerate(np.linspace(lo[0], hi[0], nu)):
-                for v in (np.linspace(lo[1], hi[1], nv) if i % 2 == 0 else np.linspace(hi[1], lo[1], nv)):  # there and back, so that the block is never carried far
-                    if np.hypot(u - here[0], v - here[1]) < 15.0:
-                        continue  # the block's own spot is photographed before anything moves
-                    names.append(f"place {len(names) + 1}")
-                    sp.at[names[-1]], sp.rot[names[-1]] = axes @ np.array([u, v, w]), sp.turn(home).copy()
-            corners = [k for k in self.spots.at]
-            shots = []
+            sp, home, up = copy.deepcopy(self.spots), self.thing_at, self.spots.up
+            axes, rpy, base = sp.limits().axes, sp.turn(home).copy(), sp.grasp(home).copy()
+            fwd = np.array([1.0, 0.0, 0.0]) - up[0] * up  # away from the arm's own base, along the table
+            fwd = fwd / np.linalg.norm(fwd)
+            left = np.cross(up, fwd)
+            place = lambda c: base + grid_mm * (c[0] * fwd + c[1] * left)  # noqa: E731
+            can = lambda p: not (self.arm.reach(p, rpy) or self.arm.reach(p + sp.lift * up, rpy))  # noqa: E731
+            # Where the arm waits while a picture is taken. The rig's camera looks across the table from beside the arm, so
+            # the arm hides much of the table from it almost wherever it waits (straight back, it hid the block in 8 of 13
+            # pictures). Before the first picture the arm therefore tries a few waiting places, mostly out to its own right,
+            # and keeps the one from which the camera sees the most of the grey mat.
+            waits = [q for q in (base + f * fwd + side * left for f, side in ((-150.0, 0.0), (-60.0, -300.0), (60.0, -300.0), (150.0, -300.0), (-150.0, -300.0), (0.0, -400.0), (150.0, -400.0), (0.0, 300.0))) if can(q)]
+            if not waits:
+                raise Refused("the arm cannot step aside from here for the camera: put the area somewhere else")
+            for k, q in enumerate(waits):  # for this job they are places like the others: inside what the guard allows
+                sp.at[f"aside {k + 1}"], sp.rot[f"aside {k + 1}"] = q, rpy.copy()
+            aside = [None]
+            todo = []  # ring by ring outwards; the places next to the block go round in a circle, the rings further out are taken
+            for ring in range(1, 6):  # ... a half turn, a quarter turn, ... apart, so that a ring that is not finished still lies all around
+                cs = sorted((c for c in ((i, j) for i in range(-1, 5) for j in range(-5, 6)) if max(abs(c[0]), abs(c[1])) == ring), key=lambda c: np.arctan2(c[1], c[0]))
+                spread = sorted(range(len(cs)), key=lambda k: int(format(k, "08b")[::-1], 2)) if ring > 1 else range(len(cs))
+                todo += [cs[k] for k in spread]
+            shots, cells, at, said = [], {home: (0, 0)}, [home], set()  # pictures; which place is where; where the block lies now
 
-            def photo(at):
-                """Step aside (above the taught spot that is farthest away), take a picture, note where the block lies."""
-                far = max(corners, key=lambda k: float(np.linalg.norm(sp.grasp(k) - sp.grasp(at))))
+            def known():
+                """(place in mm from the block's first place, pixel) for every picture in which the block is plain."""
+                blobs = eyes.the_block([im for _, im in shots], block.colour)
+                return [((grid_mm * cells[name][0], grid_mm * cells[name][1]), b.centre) for (name, _), b in zip(shots, blobs) if b is not None]
+
+            def photo(name):
+                """Step aside, take a picture, note where the block lies. The first time, find the best place to step to."""
                 self.guard.move_to(sp.above(self.guard.where()), self.P.lift, "go to the travel height")
-                self.guard.move_to(sp.above(sp.grasp(far)), self.P.travel, "step aside for the camera")
-                shots.append((sp.grasp(at).copy(), self.camera.grab()))
+                if aside[0] is None:
+                    tried = []
+                    for q in waits:
+                        self.guard.move_to(sp.above(q), self.P.travel, "try a place to wait for the camera")
+                        im = self.camera.grab()
+                        tried.append((eyes.mat_seen(im), im))
+                    best = max(range(len(tried)), key=lambda k: tried[k][0])
+                    aside[0] = waits[best]
+                    off = aside[0] - base
+                    self.say(f"  the arm will wait {abs(float(off @ left)):.0f} mm to its {'left' if off @ left > 0 else 'right'} and {abs(float(off @ fwd)):.0f} mm {'ahead' if off @ fwd > 0 else 'back'}: "
+                             f"the camera sees {100.0 * tried[best][0] / max(max(t[0] for t in tried), 1):.0f}% of the most mat there, {100.0 * tried[0][0] / max(tried[best][0], 1):.0f}% straight back")
+                    shots.append((name, tried[best][1]))
+                    return
+                self.guard.move_to(sp.above(aside[0]), self.P.travel, "step aside for the camera")
+                shots.append((name, self.camera.grab()))
+
+            def more():
+                """The next move: to the nearest place not yet used that the arm reaches and that is on the mat; after
+                the last one, back to where the block lay at first."""
+                if at[0] is None:
+                    return None
+                pairs = known() if len(shots) >= 3 else []
+                while todo and len(cells) - 1 < n:
+                    c = todo.pop(0)
+                    p = place(c)
+                    if not can(p):
+                        continue
+                    px, scale = eyes.guess_pixel(pairs, (grid_mm * c[0], grid_mm * c[1]))
+                    if px is not None and not eyes.on_mat(shots[-1][1], px, 0.6 * grid_mm * scale):
+                        if "mat" not in said:
+                            said.add("mat")
+                            self.say("  a place that would be off the grey mat is left out (and so are the others like it)")
+                        continue
+                    name = f"place {len(cells)}"
+                    cells[name], sp.at[name], sp.rot[name] = c, p, rpy.copy()
+                    leg = dict(src=at[0], dst=name, su=0.0, du=0.0, grip_mm=block.rests()[0].short, text=f"the block to {name}", then=lambda name=name: photo(name),
+                               first=(lambda: photo(home)) if not shots else None)
+                    at[0] = name
+                    return leg
+                if at[0] == home:
+                    at[0] = None
+                    return None
+                leg, at[0] = dict(src=at[0], dst=home, su=0.0, du=0.0, grip_mm=block.rests()[0].short, text=f"the block back to {home}"), None
+                return leg
 
             def finish():
-                setup, line = eyes.settle([p for p, _ in shots], [im for _, im in shots], block, axes, sp.turn(home),
-                                          extra_uv=[tuple((axes.T @ p)[:2]) for p in self.spots.at.values()], side=self.chosen)
+                keep = self.log_dir / "camera_shots"  # what the camera saw and where the arm had put the block: kept, so that a fit can be done again without the arm
+                keep.mkdir(parents=True, exist_ok=True)
+                xyz = [sp.grasp(name) for name, _ in shots]
+                for i, (_, im) in enumerate(shots):
+                    eyes.cv2.imwrite(str(keep / f"{i:02d}.jpg"), im, [eyes.cv2.IMWRITE_JPEG_QUALITY, 92])
+                (keep / "places.json").write_text(json.dumps(dict(kind=block.name, axes=np.asarray(axes).tolist(), rpy=[float(v) for v in rpy], side=self.chosen,
+                                                                  xyz=[[float(v) for v in p] for p in xyz], taught=[[float(v) for v in p] for p in self.spots.at.values()])))
+                if len(shots) < 9:
+                    raise Refused(f"only {len(shots) - 1} places could be used around the block (the arm's reach and the mat allow no more): put the area somewhere with more room")
+                setup, line = eyes.settle(xyz, [im for _, im in shots], block, axes, rpy, extra_uv=[tuple((axes.T @ base)[:2])], side=self.chosen)
                 setup.save(self.camera_path)
                 with self.lock:
                     self.setup, self.sight, self.thing_at = setup, None, home
                 self.say(f"{line}. Kept in {self.camera_path}")
 
-            stops = [home] + names + [home]
-            legs = [dict(src=a, dst=b, su=0.0, du=0.0, text=f"the block to {b}", first=(lambda a=a: photo(a)) if i == 0 else None, then=(lambda b=b: photo(b)) if b != home else None)
-                    for i, (a, b) in enumerate(zip(stops, stops[1:]))]
-            self.job = dict(steps=[], i=None, waiting=False, outcome=None, done=0, total=len(legs), src=legs[0]["src"], dst=legs[0]["dst"], rehearse=False, step=bool(step),
-                            fixed=None, kind="move", legs=legs, spots=sp, text=legs[0]["text"], finish=finish)
+            first = more()
+            if first is None:
+                raise Refused("there is no place next to the block that the arm can reach: put the area closer to the arm")
+            self.job = dict(steps=[], i=None, waiting=False, outcome=None, done=0, total=n + 1, src=first["src"], dst=first["dst"], rehearse=False, step=bool(step),
+                            fixed=None, kind="move", legs=[first], spots=sp, text=first["text"], finish=finish, more=more)
             self.stack = None
-            self.say(f"showing the camera the table: the {block.name} goes to {len(names)} places. Keep everything else off the mat")
+            self.say(f"showing the camera the table: the {block.name} goes to up to {n} places around where it lies, where the arm reaches and the mat is. Keep everything else off the mat")
             self._next.clear()
             self.worker = threading.Thread(target=self._work, daemon=True)
             self.worker.start()
@@ -191,6 +256,8 @@ class Sight:
             if why:
                 raise Refused(why)
             s, setup = self.sight, self.setup
+            if not rehearse:
+                self._empty_handed("a tower")
             if s is None or s["stale"] or time.time() - s["t"] > 300.0:
                 raise Refused("press Look first: the arm builds from a picture taken after the last move, at most five minutes old")
             self.spots.grasp(on)
@@ -209,9 +276,10 @@ class Sight:
                 t = b.rest.turns
                 turn = 0.0 if not t else (b.angle - setup.angle_ref + t / 2.0) % t - t / 2.0  # the shorter way round: a bar is the same turned by 180
                 sp.at[name], sp.rot[name] = table.point(b.uv[0], b.uv[1], setup.w_grasp), spin(setup.rpy_ref, up, turn)
-                legs.append(dict(src=name, dst=on, su=lv["hold_mm"], du=lv["base_mm"] + lv["hold_mm"] + (self.P.drop_mm if k else 0.0),
+                legs.append(dict(src=name, dst=on, su=lv["hold_mm"], grip_mm=b.grip_mm, du=lv["base_mm"] + lv["hold_mm"] + (self.P.drop_mm if k else 0.0),
                                  text=f"{b.name} onto {on}, level {k + 1} of {len(levels)}"))
             sp.extra = levels[-1]["top_mm"] + max(lv["hold_mm"] for lv in levels)  # a carried block clears the finished tower, however low it hangs
+            self._reach([sp.grasp(leg["src"]) for leg in legs] + [sp.above(sp.grasp(leg["src"])) for leg in legs] + [sp.above(sp.grasp(on))], sp.rpy, "this tower")
             self.stack, self.thing_at = dict(on=on, block_mm=None, n=0, of=len(levels), feeds=[leg["src"] for leg in legs]), None
             s["stale"] = True
             self.job = dict(steps=[], i=None, waiting=False, outcome=None, done=0, total=len(legs), src=legs[0]["src"], dst=on, rehearse=bool(rehearse), step=bool(step),

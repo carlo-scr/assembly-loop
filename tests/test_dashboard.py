@@ -593,10 +593,98 @@ def test_the_space_bar_may_hold_a_real_arm_only_when_the_program_was_started_for
         s.arm_on()
         s.dm.feed(True)
         assert s.gate.held()
-        time.sleep(0.65)  # the page stopped reporting (closed, frozen, or behind another window): that is "released"
+        time.sleep(2.6)  # the page stopped reporting (closed or frozen): that is "released"
         assert not s.gate.held() and s.dm.why().startswith("no signal")
         s.end()
         s.start("right")  # the Quest grip is still what a real arm gets when nothing is said
         assert s.hold == "quest"
     finally:
         s.close()
+
+
+def test_a_short_silence_of_the_pages_key_is_forgiven_and_a_block_left_in_the_gripper_is_put_down(ses):
+    from assemblyloop.deadman import Deadman
+
+    t = [0.0]
+    d = Deadman(timeout_s=0.6, clock=lambda: t[0], forgive_s=3.0)
+    d.feed(False)
+    d.feed(True)
+    assert d.held()
+    t[0] += 1.5  # the reports stalled for a second and a half: nothing is held meanwhile
+    assert not d.held() and d.why().startswith("no signal")
+    d.feed(True)  # ... and the key, still down, counts again without being let go first
+    assert d.held()
+    t[0] += 3.5  # a long silence is a new start: release, then press
+    d.feed(True)
+    assert not d.held() and d.why().startswith("release")
+    strict = Deadman(timeout_s=0.25, clock=lambda: t[0])  # the Quest's rule is unchanged
+    strict.feed(False)
+    strict.feed(True)
+    t[0] += 0.3
+    strict.feed(True)
+    assert not strict.held()
+
+    ready(ses)
+    a, sp = ses.arm, ses.spots
+    with pytest.raises(Refused, match="no spot"):
+        ses.put_held("nowhere")
+    a.p = a.plan = sp.above(sp.grasp("C")) - 30.0 * sp.up  # stopped in the air on the way down, the block in the gripper
+    a.bricks = {"thing": a.p.copy()}
+    a.counts, a.holding = 315, ("thing", np.zeros(3))
+    ses.thing_at = None
+    ses.grip.hold()
+    ses.put_held("B")
+    assert until(lambda: ses.worker is None, 30), ses.state()["job"]
+    assert ses.job["outcome"] == "done" and ses.thing_at == "B" and a.holding is None, (ses.job, ses.thing_at)
+    assert np.linalg.norm(a.bricks["thing"] - sp.grasp("B")) < 0.6 and ses.phase() == "ARMED"
+    ses.page_hold(False, 1000.0)
+    time.sleep(0.5)
+    ses.page_hold(False, 1050.0)  # sent on time, came in late
+    assert "held up on the way into this program" in list(ses.lines)[-1]
+    time.sleep(0.5)
+    ses.page_hold(False, 1560.0)
+    assert "the browser stalled" in list(ses.lines)[-1]
+
+
+def test_nothing_is_started_towards_a_place_the_arm_cannot_reach(ses):
+    ready(ses)
+    a = ses.arm
+    a.reach_mm = 525.0  # spot T (at 520, -40) and what is above it are just out of reach; A, B and C are not
+    ses.grip.hold()
+    n = len(moves(ses))
+    ses.move("T")
+    assert until(lambda: ses.worker is None, 10)
+    assert "cannot reach that far" in ses.job["outcome"] and "Nothing was moved" in ses.job["outcome"] and len(moves(ses)) == n, ses.job["outcome"]
+    assert ses.phase() == "ARMED" and ses.connected  # refused, not a fault: the session goes on
+    ses.set_thing("A")
+    ses.move("B")
+    assert until(lambda: ses.worker is None, 30) and ses.job["outcome"] == "done", ses.job["outcome"]
+    with pytest.raises(Refused, match="cannot reach"):
+        ses.put_held("T")
+    ses.calibrate_begin()
+    a.reach_mm = float(np.linalg.norm(a.pose()[:3])) + 10.0
+    with pytest.raises(Refused, match="cannot reach"):
+        ses.jog("fwd", 50)  # a nudge that would leave the arm's reach is not started either
+    ses.jog("back", 20)
+    assert until(lambda: ses.worker is None, 10)
+    assert ses.state()["hint"].startswith("Show it the places: switch MOVING on")  # with the page's key the hint says the key
+
+
+def test_saved_spots_are_taken_from_a_little_beside_them_and_a_move_comes_back_in(ses):
+    ready(ses)
+    a, sp = ses.arm, ses.spots
+    sp.save(ses.spots_path)
+    ses.calibrate_begin()
+    a.p = a.plan = sp.above(sp.grasp("A")) + np.array([-150.0, 0.0, 0.0])  # stopped while it stood aside: 90 mm outside the box around the spots
+    assert sp.limits().why_outside(a.p) and not sp.limits(start=a.p).why_outside(a.p)
+    ses.draft = Spots(side=ses.chosen)
+    ses.use_saved()
+    assert ses.phase() == "ARMED"
+    ses.set_thing("A")
+    ses.grip.hold()
+    ses.move("B")
+    assert until(lambda: ses.worker is None, 30) and ses.job["outcome"] == "done", ses.job["outcome"]
+    ses.calibrate_begin()
+    a.p = a.plan = sp.above(sp.grasp("A")) + np.array([-600.0, 0.0, 0.0])  # nowhere near
+    with pytest.raises(Refused, match="not over the saved spots"):
+        ses.use_saved()

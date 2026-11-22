@@ -201,6 +201,11 @@ class FakeArm:
     def rpy_now(self):
         return self.rpy.copy()
 
+    def reach(self, xyz, rpy):
+        """'' if the arm can be there, otherwise why not (the stand-in arm reaches `reach_mm` from its base, if set)."""
+        far = getattr(self, "reach_mm", None)
+        return "" if far is None or float(np.linalg.norm(xyz)) <= far else "the arm cannot reach that far"
+
     def joints_now(self):
         return [self.swing_deg if self.tilt is not None else 0.0] * 6 + [self.j7]
 
@@ -328,6 +333,19 @@ class XArm:
 
     def joints_now(self):
         return [float(v) for v in self.api.angles[:7]]
+
+    JOINT_RANGE = ((-360.0, 360.0), (-118.0, 120.0), (-360.0, 360.0), (-11.0, 225.0), (-360.0, 360.0), (-97.0, 180.0), (-360.0, 360.0))  # xArm 7 [deg]
+
+    def reach(self, xyz, rpy, margin_deg=8.0):
+        """'' if the controller finds joint angles for this pose with every joint well inside its range, otherwise
+        why not. A question to the controller: nothing moves."""
+        code, ang = self.api.get_inverse_kinematics([float(v) for v in xyz] + [float(v) for v in rpy], input_is_radian=False, return_is_radian=False)
+        if code != 0 or not ang:
+            return "the arm cannot reach that far"
+        for i, (v, (lo, hi)) in enumerate(zip(ang[:7], self.JOINT_RANGE)):
+            if min(float(v) - lo, hi - float(v)) < margin_deg:
+                return f"joint {i + 1} would be at {float(v):.0f} deg, at the end of its range"
+        return ""
 
     def rpy_now(self):
         return np.array(self.api.position[3:6], float)

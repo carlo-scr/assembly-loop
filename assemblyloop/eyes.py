@@ -272,6 +272,47 @@ class Setup:
         return cls.from_dict(json.loads(Path(path).read_text()))
 
 
+def the_block(pictures, colour=None):
+    """In pictures of ONE block that was put somewhere else for each of them: the patch that is the block, per picture
+    (None where it is not plain). The block is the one patch of its colour that is somewhere else in the other
+    pictures: what stays put (other blocks lying about) is not the block."""
+    per = [[b for b in find_blobs(im) if (colour is None or b.colour == colour) and not b.cut] for im in pictures]
+    near, out = 0.012 * pictures[0].shape[1], []
+    for i, blobs in enumerate(per):
+        moved = [b for b in blobs if len(per) < 2 or sum(any(np.hypot(b.centre[0] - o.centre[0], b.centre[1] - o.centre[1]) < near for o in other)
+                                                         for j, other in enumerate(per) if j != i) < 0.5 * (len(per) - 1)]
+        out.append(moved[0] if len(moved) == 1 else None)
+    return out
+
+
+def guess_pixel(pairs, at):
+    """Where a place of the table will show in the picture, guessed from places near it whose pixel is known.
+    `pairs`: [((u, v) mm, (x, y) pixels)]. Returns (pixel, pixels per millimetre), or (None, 0) with fewer than three."""
+    if len(pairs) < 3:
+        return None, 0.0
+    near = sorted(pairs, key=lambda q: np.hypot(q[0][0] - at[0], q[0][1] - at[1]))[:6]
+    A = np.array([[u, v, 1.0] for (u, v), _ in near])
+    if np.linalg.matrix_rank(A, tol=1.0) < 3:
+        return None, 0.0
+    M = np.linalg.lstsq(A, np.array([px for _, px in near], float), rcond=None)[0]
+    return np.array([at[0], at[1], 1.0]) @ M, float(np.sqrt(abs(np.linalg.det(M[:2]))))
+
+
+def on_mat(bgr, px, radius_px):
+    """Is the table around this pixel the grey mat (dull and neither bright nor black), not bare wood or the edge?"""
+    x, y, r = int(round(px[0])), int(round(px[1])), max(4, int(radius_px))
+    if x - r < 0 or y - r < 0 or x + r >= bgr.shape[1] or y + r >= bgr.shape[0]:
+        return False
+    hsv = cv2.cvtColor(bgr[y - r:y + r + 1, x - r:x + r + 1], cv2.COLOR_BGR2HSV)
+    return float(((hsv[..., 1] < 80) & (hsv[..., 2] > 45) & (hsv[..., 2] < 150)).mean()) > 0.85
+
+
+def mat_seen(bgr):
+    """How much grey mat the picture shows (a number to compare pictures by): the arm, wherever it waits, hides some."""
+    hsv = cv2.cvtColor(cv2.resize(bgr, None, fx=0.25, fy=0.25, interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2HSV)
+    return int(((hsv[..., 1] < 80) & (hsv[..., 2] > 45) & (hsv[..., 2] < 150)).sum())
+
+
 def area_around(uvs, margin_mm=40.0):
     """The outline around these points of the table, pushed out by a margin."""
     hull = cv2.convexHull(np.asarray(uvs, np.float32)).reshape(-1, 2).astype(float)
@@ -292,14 +333,7 @@ def settle(xyz, pictures, kind, axes, rpy_ref, extra_uv=(), side="right"):
     rest = kind.rests()[0]
     if not rest.turns:
         raise Refused("show the camera the table with a bar or a slab: a cylinder on its end has no direction")
-    per = [[b for b in find_blobs(im) if (kind.colour is None or b.colour == kind.colour) and not b.cut] for im in pictures]
-    near, found = 0.012 * pictures[0].shape[1], []
-    for i, (p, blobs) in enumerate(zip(xyz, per)):
-        # the block is the one patch that is somewhere else in the other pictures: what stays put is not the block
-        moved = [b for b in blobs if sum(any(np.hypot(b.centre[0] - o.centre[0], b.centre[1] - o.centre[1]) < near for o in other)
-                                         for j, other in enumerate(per) if j != i) < 0.5 * (len(per) - 1)]
-        if len(moved) == 1:
-            found.append((np.asarray(p, float), moved[0]))
+    found = [(np.asarray(p, float), b) for p, b in zip(xyz, the_block(pictures, kind.colour)) if b is not None]
     if found:
         middle = float(np.median([b.area for _, b in found]))
         found = [(p, b) for p, b in found if 0.5 * middle <= b.area <= 2.0 * middle]
@@ -307,8 +341,14 @@ def settle(xyz, pictures, kind, axes, rpy_ref, extra_uv=(), side="right"):
         raise Refused(f"the block was plainly seen in only {len(found)} of {len(pictures)} places (8 are needed): is it the only {kind.colour or 'coloured'} thing on the mat, "
                       "and is the arm out of the camera's way?")
     size = (pictures[0].shape[1], pictures[0].shape[0])
-    pts = np.array([p for p, _ in found])
-    cam = calibrate([b.centre for _, b in found], pts, size)
+    for _ in range(3):  # a place that fits far worse than the others is left out, and the camera is fitted again
+        pts = np.array([p for p, _ in found])
+        cam = calibrate([b.centre for _, b in found], pts, size)
+        err = np.linalg.norm(cam.project(pts) - np.array([b.centre for _, b in found]), axis=1)
+        worst = int(np.argmax(err))
+        if len(found) <= 9 or err[worst] < max(6.0 * float(np.median(err)), 0.0015 * size[0]):
+            break
+        found.pop(worst)
     w = float(np.mean(pts @ axes[:, 2]))
     table = Table(np.asarray(axes, float), w - rest.height / 2.0)
     from .blocks import Catalogue  # the one block alone, as it lies: nothing else may be fitted here

@@ -94,7 +94,7 @@ class Spots:
         p = np.asarray(p, float)
         return p + (self.travel_w() - float(p @ self.up)) * self.up
 
-    def limits(self, margin_mm=60.0, above_mm=40.0, below_mm=2.0, floor_w=None, ceil_w=None, **kw):
+    def limits(self, margin_mm=60.0, above_mm=40.0, below_mm=2.0, floor_w=None, ceil_w=None, start=None, **kw):
         up = self.up
         a = np.array([1.0, 0.0, 0.0]) if abs(up[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
         u = np.cross(up, a)
@@ -105,6 +105,10 @@ class Spots:
         lo = np.array([C[:, 0].min() - margin_mm, C[:, 1].min() - margin_mm, C[:, 2].min() - below_mm if floor_w is None else float(floor_w)])
         top = C[:, 2].max() + self.lift + self.extra + above_mm  # `ceil_w`: where the arm is now, if that is higher (it comes down first)
         hi = np.array([C[:, 0].max() + margin_mm, C[:, 1].max() + margin_mm, top if ceil_w is None else max(top, float(ceil_w))])
+        if start is not None:  # where the arm stands now, if that is a little outside (it was stopped while stepping aside): it may come back in from there
+            c = A.T @ np.asarray(start, float)
+            if np.all(c[:2] >= lo[:2] - 250.0) and np.all(c[:2] <= hi[:2] + 250.0):
+                lo[:2], hi[:2] = np.minimum(lo[:2], c[:2] - 2.0), np.maximum(hi[:2], c[:2] + 2.0)
         return Limits(np.zeros(3), A, lo, hi, **kw)
 
     # ------------------------------------------------------------------ file
@@ -138,10 +142,11 @@ def demo_spots():
     return s
 
 
-def plan_move(spots, src, dst, here, P, rehearse=False, src_up=0.0, dst_up=0.0):
+def plan_move(spots, src, dst, here, P, rehearse=False, src_up=0.0, dst_up=0.0, grip_mm=None):
     """Steps to take the thing at `src` and put it down at `dst`, starting from wherever the arm is (`here`).
     `src_up` / `dst_up` [mm] raise the pick-up / the put-down above the taught spot (the levels of a tower).
-    A rehearsal does the same travel at the travel height and never comes down."""
+    A rehearsal does the same travel at the travel height and never comes down. `grip_mm`: how wide the thing is
+    across the jaws, if that is known: it is then held gently (see `Params.squeeze_mm`), not as hard as the jaws close."""
     if src == dst:
         raise Refused("from and to are the same spot")
     up = spots.up
@@ -155,7 +160,10 @@ def plan_move(spots, src, dst, here, P, rehearse=False, src_up=0.0, dst_up=0.0):
     if not rehearse:
         first = gs + min(20.0, spots.lift) * up
         S += [dict(name=f"lower around the thing at {ns}", kind="move", to=gs, speed=P.slow, stall_mm=P.stall_mm),
-              dict(name="close on it", kind="grip", counts=P.shut_counts, must_hold=True),
+              # a thing of known width is closed on to just under that width and no further: the jaws never squeeze as
+              # hard as they can (which bends the fingers). Whether something is held can then not be told from the jaws.
+              dict(name="close on it", kind="grip", counts=P.shut_counts, must_hold=True) if not grip_mm or P.squeeze_mm <= 0 else
+              dict(name="close on it, gently", kind="grip", counts=max(0, int(round((float(grip_mm) - P.squeeze_mm) * 10.0)))),
               dict(name="read the grasp", kind="read"),
               dict(name="lift it, slowly at first", kind="move", to=first, speed=P.press, stall_mm=P.pull_stall_mm, let_go_if_blocked=True),
               dict(name="lift to the travel height", kind="move", to=hs, speed=P.lift)]

@@ -34,8 +34,10 @@ def discovery_reply(data, port, name, busy=False):
 
 
 class Deadman:
-    def __init__(self, timeout_s=0.25, clock=time.monotonic):
-        self.timeout_s, self.clock = float(timeout_s), clock
+    def __init__(self, timeout_s=0.25, clock=time.monotonic, forgive_s=0.0):
+        # `forgive_s`: a silence up to this long does not ask for a new release-then-press once the signal is back
+        # (nothing is held DURING the silence either way). For a switch whose own reports stall now and then.
+        self.timeout_s, self.clock, self.forgive_s = float(timeout_s), clock, float(forgive_s)
         self._lock = threading.Lock()
         self._last_any = None  # when a signal of any kind last arrived
         self._last_press = None  # when a counted "pressed" last arrived
@@ -48,8 +50,10 @@ class Deadman:
         with self._lock:
             if self._last_any is not None:
                 self._gaps = [(a, d) for a, d in self._gaps if t - a <= 5.0] + [(t, t - self._last_any)]
-            if self._last_any is None or t - self._last_any > self.timeout_s:
+            if self._last_any is None or t - self._last_any > max(self.timeout_s, self.forgive_s):
                 self._armed, self._last_press = False, None  # the signal was gone: start over
+            elif t - self._last_any > self.timeout_s:
+                self._last_press = None  # a short silence, forgiven: held again with the next "pressed"
             self._last_any = t
             self.n += 1
             if not pressed:

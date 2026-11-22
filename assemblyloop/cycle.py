@@ -34,6 +34,7 @@ class Params:
     open_counts: int = 850
     shut_counts: int = 0
     held_min_counts: int = 100  # the jaws stalled on something if they stop above this
+    squeeze_mm: float = 2.5  # a block of known width is held this much narrower than it is (0: as hard as the jaws close)
     max_offset_mm: float = 15.0
     stall_mm: float = 2.5  # lowering and pressing end once the measured arm is this far behind the plan
     pull_stall_mm: float = 4.0  # pulling a brick off its studs is allowed a little more, then it counts as stuck

@@ -110,12 +110,12 @@ def test_the_camera_is_shown_the_table_then_sees_blocks_and_a_tower_is_built_fro
     assert setup is not None and ses.camera_path.exists() and setup.fit_mm < 2.0 and scene.n >= 10, (setup, scene.n)
     assert ses.thing_at == "A" and np.linalg.norm(a.bricks["thing"] - sp.grasp("A")) < 0.6  # the block is back where it lay
     assert abs(setup.angle_ref - 30.0) < 2.0 and np.allclose(setup.rpy_ref, sp.turn("A"))
-    assert all(setup.inside(setup.table.coords(p)[:2]) for p in sp.at.values())
+    assert setup.inside(setup.table.coords(sp.grasp("A"))[:2]) and not setup.inside(setup.table.coords(sp.grasp("A") + [-200.0, 0.0, 0.0])[:2])  # around where the block lay, not behind it
     eye = ses.state()["eye"]
     assert eye["ready"] and eye["fit_mm"] < 2.0 and eye["shown"]
 
     # the mat as a person would set it: blocks lying anywhere between the taught spots, turned any way
-    lay = {"slab": ("blue slab", 0, 430.0, 40.0, 100.0), "bar": ("green bar", 0, 445.0, -80.0, 75.0), "cyl": ("yellow cylinder", 0, 410.0, -30.0, 0.0), "lying": ("yellow cylinder", 1, 490.0, 70.0, 20.0)}
+    lay = {"slab": ("blue slab", 0, 450.0, -30.0, 100.0), "bar": ("green bar", 0, 470.0, -150.0, 75.0), "cyl": ("yellow cylinder", 0, 400.0, -170.0, 0.0), "lying": ("yellow cylinder", 1, 550.0, -150.0, 20.0)}
     table = setup.table
     a.holding, a.bricks = None, {}
     for name, (kind, rest, x, y, angle) in lay.items():
@@ -144,7 +144,7 @@ def test_the_camera_is_shown_the_table_then_sees_blocks_and_a_tower_is_built_fro
     for name, level_mm in (("slab", 0.0), ("bar", 15.0 + drop), ("cyl", 40.0 + 35.0 + drop)):  # the cylinder is held 35 mm above its bottom
         d = a.bricks[name] - base
         assert abs(float(d @ sp.up) - level_mm) < 0.6 and np.linalg.norm(d - (d @ sp.up) * sp.up) < 2.5, (name, d)
-    assert np.linalg.norm(a.bricks["lying"] - table.point(*table.coords([490.0, 70.0, 0.0])[:2], setup.w_grasp)) < 1e-6  # the lying cylinder was not touched
+    assert np.linalg.norm(a.bricks["lying"] - table.point(*table.coords([550.0, -150.0, 0.0])[:2], setup.w_grasp)) < 1e-6  # the lying cylinder was not touched
     assert len([e for e in a.log if e[0] == "turn"]) > turns  # the gripper was turned to take the bar across its short side
     with pytest.raises(Refused, match="Look first"):  # what the camera saw is no longer what is there
         ses.build_seen("T")
@@ -218,9 +218,11 @@ def test_the_table_is_found_by_coming_down_with_a_bar_and_the_camera_is_shown_it
         s.pressed = True
         with pytest.raises(Refused, match="100 to 400"):
             s.find_table(50.0, 140.0)
-        s.find_table()  # nothing is between the jaws
-        assert until(lambda: s.worker is None, 20) and "nothing is between the jaws" in s.note and s.phase() == "AWAITING CALIBRATION", s.note
+        with pytest.raises(Refused, match="the gripper is open"):
+            s.find_table()
         a.bricks = {"thing": a.p.copy()}
+        s.grip(True, 25.0)  # closed on the bar, to just under its width
+        assert until(lambda: s.worker is None, 20) and "closed to 22 mm" in s.note and a.holding is not None and [e[2] for e in a.log if e[0] == "grip"] == [225], s.note
         s.find_table(200.0, 140.0)
         assert until(lambda: s.worker is None, 60), s.state()["calibration"]
         assert s.phase() == "ARMED" and s.thing_at == "T" and sorted(s.spots.at) == ["P", "Q", "T"], (s.phase(), s.note)
@@ -267,7 +269,7 @@ def test_a_gripper_brought_to_the_table_by_hand_is_taken_as_the_table(tmp_path):
         a = s.arm
         a.p = a.plan = np.array([460.0, 0.0, 120.0])  # the fingertips touch the table here
         a.blocked = lambda p: p[2] < 120.0
-        a.bricks = {"thing": a.p.copy()}
+        a.bricks, a.holding, a.counts = {"thing": a.p.copy()}, ("thing", np.zeros(3)), 315
         assert until(lambda: all(c["ok"] for c in s.state()["checks"]), 6)
         s.arm_on()
         s.dm.feed(False)
@@ -280,3 +282,149 @@ def test_a_gripper_brought_to_the_table_by_hand_is_taken_as_the_table(tmp_path):
     finally:
         alive[0] = False
         s.close()
+
+
+def test_a_wrong_first_picture_a_block_still_in_the_gripper_and_a_gentle_grip(ses):
+    CAT.save(ses.blocks_path)
+    a, scene, grab, n = ses.arm, ses.camera, ses.camera.grab, [0]
+    a.counts = 160  # the jaws are closed on something
+    with pytest.raises(Refused, match="not open"):
+        ses.show_table("green bar")
+    with pytest.raises(Refused, match="not open"):
+        ses.move("B")
+    a.counts = 850
+
+    def first_wrong():  # in the first picture the block is not where the arm thinks it is
+        n[0] += 1
+        if n[0] > 1:
+            return grab()
+        keep = a.bricks["thing"].copy()
+        a.bricks["thing"] = keep + np.array([60.0, 90.0, 0.0])
+        try:
+            return grab()
+        finally:
+            a.bricks["thing"] = keep
+
+    scene.grab = first_wrong
+    a.BRICK_COUNTS = 150  # these jaws bend: closed as hard as they go they read 15 mm on a 25 mm bar
+    ses.pressed = True
+    ses.show_table("green bar")
+    assert until(lambda: ses.worker is None, 120) and ses.job["outcome"] == "done", (ses.job["outcome"], list(ses.lines)[-3:])
+    assert ses.setup.fit_mm < 2.0 and "fitted to 12 places" in " ".join(ses.lines)  # 13 pictures, the wrong one left out
+    shots = ses.log_dir / "camera_shots"
+    assert len(list(shots.glob("*.jpg"))) == 13 and len(__import__("json").loads((shots / "places.json").read_text())["xyz"]) == 13
+    grips = [e[2] for e in a.log if e[0] == "grip"]
+    assert grips.count(225) >= 12 and 0 not in grips  # every pick closes to 2.5 mm under the bar's 25 mm, and never as hard as the jaws go
+
+
+def test_the_area_is_put_somewhere_else_at_the_table_height_found_before(tmp_path):
+    s = Session({"stand-in": dict(label="Stand-in arm (no robot)", ip=None, make=FakeArm)}, spots_path=tmp_path / "spots.json", log_dir=tmp_path / "logs", probe=lambda ip: False,
+                fake_speed=40.0, guard_kw=dict(poll_s=0.002), limit_kw=dict(settle_s=0.0), camera_path=tmp_path / "camera.json", blocks_path=tmp_path / "blocks.json")
+    alive = [True]
+    threading.Thread(target=lambda: [(s.dm and s.dm.feed(bool(s.gate and s.gate.armed)), time.sleep(0.02)) for _ in iter(lambda: alive[0], False)], daemon=True).start()
+    try:
+        s.start("stand-in")
+        a = s.arm
+        a.p = a.plan = np.array([460.0, 0.0, 121.5])
+        a.bricks, a.holding, a.counts = {"thing": a.p.copy()}, ("thing", np.zeros(3)), 315
+        assert until(lambda: all(c["ok"] for c in s.state()["checks"]), 6)
+        s.arm_on()
+        s.dm.feed(False)
+        with pytest.raises(Refused, match="no table height from before"):
+            s.find_table(as_before=True)
+        s.find_table(200.0, 140.0, here=True)  # the table is found once: T at 123 mm
+        assert until(lambda: s.worker is None, 30) and s.phase() == "ARMED"
+        w = float(s.spots.grasp("T")[2])
+        s.calibrate_begin()  # ... and now the area is wanted 150 mm further on, the bar in the jaws, the gripper 60 mm up
+        for name in list(s.draft.at):
+            s.remove_spot(name)
+        a.p = a.plan = np.array([610.0, -40.0, w + 60.0])
+        a.bricks, a.holding, a.counts = {"thing": a.p.copy()}, ("thing", np.zeros(3)), 315
+        s.dm.feed(False)
+        s.find_table(200.0, 140.0, as_before=True)
+        assert until(lambda: s.worker is None, 30), s.state()["calibration"]
+        assert s.phase() == "ARMED" and "height from before" in s.note and s.thing_at == "T", (s.phase(), s.note)
+        assert np.allclose(s.spots.grasp("T"), [610.0, -40.0, w], atol=0.05) and a.holding is None and np.linalg.norm(a.bricks["thing"] - s.spots.grasp("T")) < 0.1
+    finally:
+        alive[0] = False
+        s.close()
+
+
+def test_the_places_go_only_where_the_arm_reaches_and_the_mat_is(ses):
+    CAT.save(ses.blocks_path)
+    a, sp, scene, grab = ses.arm, ses.spots, ses.camera, ses.camera.grab
+    home = sp.grasp("A").copy()  # (430, -90): forward is +x, left is +y
+
+    def with_wood():  # the grey mat ends 75 mm to the left of the block: bare wood from there on
+        im = grab()
+        axes = sp.limits().axes
+        far = [axes.T @ np.array([x, y, home[2] - BAR.height / 2.0]) for x, y in ((0.0, -15.0), (1200.0, -15.0), (1200.0, 900.0), (0.0, 900.0))]
+        wood = np.round(scene.cam.project([axes @ q for q in far])).astype(np.int32)
+        clean = im.copy()
+        cv2.fillPoly(im, [wood], (114, 165, 183))
+        coloured = cv2.cvtColor(clean, cv2.COLOR_BGR2HSV)[..., 1] > 150  # the block stays on top of whatever it lies on
+        im[coloured] = clean[coloured]
+        return im
+
+    scene.grab = with_wood
+    a.reach_mm = float(np.linalg.norm(home + [130.0, 0.0, 80.0]))  # ... and the arm reaches about two places further than the block
+    ses.pressed = True
+    ses.show_table("green bar", n=14)
+    assert until(lambda: ses.worker is None, 180), ses.state()["job"]
+    assert ses.job["outcome"] == "done", (ses.job["outcome"], list(ses.lines)[-4:])
+    used = np.array([p - home for k, p in ses.job["spots"].at.items() if k.startswith("place")])
+    assert 9 <= len(used) <= 14 and ses.setup.fit_mm < 2.5, (len(used), ses.setup.fit_mm)
+    assert all(np.linalg.norm(home + d + [0.0, 0.0, 80.0]) <= a.reach_mm + 1e-6 for d in used)  # nowhere beyond the arm's reach
+    assert used[:, 1].max() <= 60.0 + 1e-6 and (used[:, 1] > 1.0).sum() <= 2  # hardly anything on the wood (the first places are tried before the mat is known)
+    assert "off the grey mat is left out" in " ".join(ses.lines)
+    assert used[:, 0].min() >= -60.0 - 1e-6  # and nothing behind the block, where the arm waits for the camera
+    assert np.linalg.norm(a.bricks["thing"] - home) < 0.6 and ses.thing_at == "A"
+
+
+def test_only_the_tab_opened_last_is_the_switch(ses):
+    import json
+    import urllib.request
+
+    from assemblyloop.dashboard import make_server
+
+    srv = make_server(ses, 0)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{srv.server_address[1]}"
+    hold = lambda page, pressed: urllib.request.urlopen(urllib.request.Request(url + "/api/hold", json.dumps(dict(pressed=pressed, page=page, t=0)).encode(), {"Content-Type": "application/json", "X-Token": srv.token})).read()  # noqa: E731
+    try:
+        assert "PAGE_ID=1," in urllib.request.urlopen(url + "/").read().decode() and "PAGE_ID=2," in urllib.request.urlopen(url + "/").read().decode()
+        assert json.loads(urllib.request.urlopen(url + "/api/state").read())["page"] == 2
+        ses.alive = False  # the fixture's own stand-in for the switch is silenced: only the two tabs report now
+        time.sleep(0.1)
+        hold(2, False)
+        hold(2, True)
+        assert ses.gate.held()
+        hold(1, False)  # the old tab, still open somewhere, says "off": it is not listened to
+        assert ses.gate.held()
+        hold(2, False)
+        assert not ses.gate.held()
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_the_arm_finds_where_to_wait_so_that_it_does_not_hide_the_table(ses):
+    CAT.save(ses.blocks_path)
+    a, sp, scene, grab = ses.arm, ses.spots, ses.camera, ses.camera.grab
+    home = sp.grasp("A").copy()
+
+    def with_arm():  # the arm hides the table under and ahead of where it is, as it does from a camera that stands beside it
+        im = grab()
+        under = np.array([a.p[0] + 150.0, a.p[1], home[2] - BAR.height / 2.0])
+        px = scene.cam.project([under])[0]
+        cv2.circle(im, (int(px[0]), int(px[1])), 300, (245, 245, 245), -1)
+        return im
+
+    scene.grab = with_arm
+    ses.pressed = True
+    ses.show_table("green bar")
+    assert until(lambda: ses.worker is None, 240), ses.state()["job"]
+    assert ses.job["outcome"] == "done", (ses.job["outcome"], list(ses.lines)[-4:])
+    line = next(x for x in ses.lines if "the arm will wait" in x)
+    assert ("to its right" in line or "to its left" in line) and " 0 mm to its" not in line, line  # out to the side, not straight back
+    assert "fitted to 1" in " ".join(ses.lines) and ses.setup.fit_mm < 2.5  # ... and from there the block is seen in (nearly) every place

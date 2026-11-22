@@ -43,6 +43,7 @@ h3{font-size:15px;margin:14px 0 0;font-weight:600}
 button{font:inherit;font-weight:600;border:1px solid var(--line);background:var(--btn);color:var(--ink);padding:9px 16px;border-radius:8px;cursor:pointer}
 button:disabled{opacity:.45;cursor:not-allowed}button.x{padding:2px 9px;font-weight:400}
 #stop{background:var(--stop);color:#fff;border-color:var(--stop);font-size:17px;padding:12px 26px}
+#moveswitch{font-size:17px;padding:12px 22px;border-width:2px;min-width:290px}#moveswitch.on{background:var(--run);border-color:var(--run);color:#fff}#moveswitch.off{background:transparent;border-color:var(--stop);color:var(--stop)}
 .go{background:var(--armed);color:#fff;border-color:var(--armed)}
 main{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:14px;padding:16px 20px;max-width:1500px;margin:0 auto}
 section{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;min-width:0}
@@ -63,12 +64,13 @@ pre{margin:0;font:12.5px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap;m
 @media (max-width:700px){ol{columns:1}}
 </style></head><body>
 <header><div class="top"><h1>Assembly loop</h1><div id="phase">…</div><div id="hint"></div>
+<button id="moveswitch" class="off" hidden title="While this is on the arm may move. Space bar or Esc switch it off.">MOVING OFF · click to allow</button>
 <button id="stop" title="Stops the arm and ends this session">STOP SESSION</button></div>
 <div id="ladder"><span data-p="OFF">OFF</span><span data-p="DISARMED">DISARMED</span><span data-p="AWAITING CALIBRATION">AWAITING CALIBRATION</span><span data-p="ARMED">ARMED</span><span data-p="RUNNING">RUNNING</span></div>
 <div id="msg"></div></header>
 <main>
 <section><h2>Session</h2>
-<div id="s_off"><ul id="arms"></ul><label class="chk" id="questrow" hidden><input type="checkbox" id="usequest"> use the Quest grip instead of the space bar</label>
+<div id="s_off"><ul id="arms"></ul><label class="chk" id="questrow" hidden><input type="checkbox" id="usequest"> use the Quest grip instead of the MOVING button on this page</label>
 <div class="row"><button id="startbtn" class="go">Start session</button></div><div class="note" id="ended"></div></div>
 <div id="s_on" hidden><dl id="sess"></dl><div class="row"><button id="endbtn">End session</button></div></div></section>
 
@@ -84,19 +86,20 @@ pre{margin:0;font:12.5px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap;m
 <div id="c_none" class="note">Starts with the session.</div>
 <div id="c_dis" class="note" hidden>Arm first. Then you nudge the gripper to each place from here, in small steps, while holding the grip.</div>
 <div id="c_teach" hidden>
-<div class="pad"><span></span><button data-j="fwd">Forward<i>W</i></button><span></span><button data-j="up">Up<i>Q</i></button>
-<button data-j="left">Left<i>A</i></button><span></span><button data-j="right">Right<i>D</i></button><span></span>
-<span></span><button data-j="back">Back<i>S</i></button><span></span><button data-j="down">Down<i>E</i></button></div>
+<div class="pad"><span></span><button data-j="fwd">Forward<i>↑</i></button><span></span><button data-j="up">Up<i>Q</i></button>
+<button data-j="left">Left<i>←</i></button><span></span><button data-j="right">Right<i>→</i></button><span></span>
+<span></span><button data-j="back">Back<i>↓</i></button><span></span><button data-j="down">Down<i>E</i></button></div>
 <div class="row"><label>Step<select id="jogmm"><option value="1">1 mm</option><option value="5" selected>5 mm</option><option value="20">20 mm</option><option value="50">50 mm</option></select></label>
-<button id="gopen">Open gripper</button><button id="gclose">Close gripper</button></div>
+<button id="gopen">Open gripper</button><label>Block is this wide (mm)<input type="number" id="gwidth" value="25.4" min="5" max="84" step="0.1"></label><button id="gclose">Close gripper</button></div>
+<div class="note">Close stops just under the width given, so the fingers do not bend. With the box empty it closes as far as it goes and says how wide the thing is.</div>
 <div class="row"><label>Turn by<select id="jogdeg"><option value="5">5°</option><option value="15" selected>15°</option><option value="45">45°</option><option value="90">90°</option></select></label>
 <button data-t="ccw">Turn ⟲<i>Z</i></button><button data-t="cw">Turn ⟳<i>C</i></button></div>
 <div class="row"><button id="levelbtn">Point the gripper down</button><span class="note" id="tiltnote"></span></div>
 <div class="note" id="jognote"></div>
 <div class="note">Forward is away from the robot's base. Up and down follow the gripper's own axis, so it should point at the table. Turning spins the gripper in place (only its last joint moves). Every nudge is slow and ends by itself if something is in the way.</div>
 <h3>Find the table by itself</h3>
-<div class="row"><label>Area across (mm)<input type="number" id="ft_w" value="200" min="100" max="400" step="10"></label><label>Area deep (mm)<input type="number" id="ft_d" value="140" min="100" max="400" step="10"></label><button id="ftbtn" class="go">Find the table</button><button id="fthere">The gripper is at the table now</button></div>
-<div class="note">Instead of teaching spots by hand. Bring the gripper over the middle of the area the blocks will lie in, pointing straight down. Hold a green or blue bar between the open jaws by its ends, lying level, the jaws across its short side, and press Close gripper. Then press Find the table and hold the grip: the gripper comes straight down slowly until the bar meets the mat, lets go, and the label reads ARMED. Let go of the grip if it visibly pushes into the table. The tower will stand where the bar was put down. If you have already brought the fingertips down onto the mat yourself, press "The gripper is at the table now" instead: nothing comes down, the bar is let go there.</div>
+<div class="row"><label>Area across (mm)<input type="number" id="ft_w" value="200" min="100" max="400" step="10"></label><label>Area deep (mm)<input type="number" id="ft_d" value="140" min="100" max="400" step="10"></label><button id="ftbtn" class="go">Find the table</button><button id="fthere">The gripper is at the table now</button><button id="ftsame">Put the area here (table height as before)</button></div>
+<div class="note">Instead of teaching spots by hand. Bring the gripper over the middle of the area the blocks will lie in, pointing straight down. Hold a green or blue bar between the open jaws by its ends, lying level, the jaws across its short side, and press Close gripper. Then press Find the table and hold the grip: the gripper comes straight down slowly until the bar meets the mat, lets go, and the label reads ARMED. Let go of the grip if it visibly pushes into the table. The tower will stand where the bar was put down. If you have already brought the fingertips down onto the mat yourself, press "The gripper is at the table now" instead: nothing comes down, the bar is let go there. If the table was found before and only the place should change, bring the gripper over the new middle at any height and press "Put the area here": it comes straight down to the height found before.</div>
 <h3>Or teach spots by hand</h3>
 <div class="row"><label>Name of this spot<input type="text" id="spotname" value="A" size="6" maxlength="12"></label><button id="spotbtn" class="go">Save spot here</button></div>
 <ul id="spots_edit"></ul>
@@ -110,6 +113,7 @@ pre{margin:0;font:12.5px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap;m
 <h3>One block</h3>
 <div class="row"><label>The block stands on<select id="thing"></select></label><label>Put it on<select id="dst"></select></label>
 <label>How many moves<input type="number" id="count" value="1" min="1" max="500"></label><button id="gobtn" class="go">Go</button></div>
+<div class="row"><label>The gripper still holds a block: put it down on<select id="ph_on"></select></label><button id="phbtn">Put it down</button></div>
 <h3>A tower</h3>
 <div class="row"><label>Tower stands on<select id="tw_on"></select></label><label>Block height (mm)<input type="number" id="tw_h" value="30" min="10" max="80" step="0.5"></label>
 <label>Blocks on it now<input type="number" id="tw_n" value="0" min="0" max="6"></label><label>Rounds<input type="number" id="tw_r" value="1" min="1" max="50"></label></div>
@@ -130,9 +134,10 @@ pre{margin:0;font:12.5px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap;m
 <section class="wide"><h2>Log</h2><pre id="log"></pre></section>
 </main>
 <script>
-const TOKEN="__TOKEN__", $=id=>document.getElementById(id);
+const TOKEN="__TOKEN__", PAGE_ID=__PAGE__, $=id=>document.getElementById(id);
 const COL={"OFF":"--off","STOPPED":"--stop","DISARMED":"--dis","AWAITING CALIBRATION":"--cal","ARMED":"--armed","RUNNING":"--run","PAUSED":"--cal"};
-async function post(path, body){ $("msg").textContent="";
+const BIG=["/api/level","/api/find_table","/api/move","/api/tower","/api/show_table","/api/build_seen","/api/put_held","/api/calibrate"];
+async function post(path, body){ $("msg").textContent=""; if(BIG.includes(path)){ halt(); big=true; }
   try{ const r=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json","X-Token":TOKEN},body:JSON.stringify(body||{})});
        const j=await r.json(); if(j.error) $("msg").textContent=j.error; tick(); return j; }catch(e){ $("msg").textContent="no answer from the program: "+e; } }
 function dl(el, rows){ el.replaceChildren(...rows.flatMap(([k,v])=>{const a=document.createElement("dt"),b=document.createElement("dd");a.textContent=k;b.textContent=v;return [a,b];})); }
@@ -144,6 +149,7 @@ let sig={}, lastThing, lastN;
 function once(key, value, fn){ const v=JSON.stringify(value); if(sig[key]!==v){ sig[key]=v; fn(); } }
 function options(sel, names, first){ const keep=sel.value; sel.replaceChildren(...first.concat(names.map(n=>[n,n])).map(([v,t])=>{const o=document.createElement("option");o.value=v;o.textContent=t;return o;})); if([...sel.options].some(o=>o.value===keep)) sel.value=keep; }
 function render(s){
+  if(s.page!==PAGE_ID){ down=false; $("msg").textContent="This tab is an old copy of the dashboard: a newer one is open. Close this tab."; document.body.style.opacity=.45; }
   const p=$("phase"); p.textContent=s.phase+(s.fake?" · stand-in arm":""); p.style.color=`var(${COL[s.phase]})`;
   $("hint").textContent=s.hint;
   const rung=s.phase==="PAUSED"?"RUNNING":(s.phase==="STOPPED"?"OFF":s.phase);
@@ -161,9 +167,9 @@ function render(s){
     dl($("sess"),[["Arm",a.label+(a.ip?" at "+a.ip:"")],["Connection",s.phase==="DISARMED"?"connected, read only":"connected, switched on"]]); }
   // hold-to-run
   const q=s.quest, h=$("held");
-  if(q){ h.textContent=q.held?"GRIP HELD":(q.why==="released"?"grip released":(q.why==="held"?"grip held, not armed":q.why)); h.className="big "+(q.held?"held":"rel");
-    dl($("quest"),[["Switch",s.hold==="page"?"space bar on this page":"Quest controller grip"],["Signal",q.frames? `${q.hz} per second, longest gap ${q.gap_ms} ms`:"none yet"]].concat(s.hold==="page"?[]:[["Grip value",q.grip==null?"…":Number(q.grip).toFixed(2)]]));
-    $("holdnote").textContent=s.hold==="page"?(s.fake?"Hold the space bar to stand in for the grip.":"Hold the SPACE BAR to let the arm move; let go to pause it. It counts only while this page is in front and has the keyboard. With the space bar held: F closes the gripper, R opens it. The red emergency stop stays in reach."):"Squeeze past halfway to hold. The red emergency stop stays in reach.";
+  if(q){ h.textContent=s.hold==="page"?(q.held?"MOVING ALLOWED":(q.why==="released"?"moving is off":(q.why==="held"?"switched on, not armed":q.why))):(q.held?"GRIP HELD":(q.why==="released"?"grip released":(q.why==="held"?"grip held, not armed":q.why))); h.className="big "+(q.held?"held":"rel");
+    dl($("quest"),[["Switch",s.hold==="page"?"the MOVING button at the top of this page":"Quest controller grip"],["Signal",q.frames? `${q.hz} per second, longest gap ${q.gap_ms} ms`:"none yet"]].concat(s.hold==="page"?[]:[["Grip value",q.grip==null?"…":Number(q.grip).toFixed(2)]]));
+    $("holdnote").textContent=s.hold==="page"?"Click the big MOVING button at the top: the arm may move. Click it again, or press the SPACE BAR or ESC, and it stops at once. It goes off by itself whenever a task is asked for or has ended: click the task, then click the button. It STAYS ON when another window is in front: the space bar and Esc only work while this page is in front, so keep the emergency stop in reach. Everything else is done with the buttons on this page; no other key does anything. The red emergency stop stays in reach.":"Squeeze past halfway to hold. The red emergency stop stays in reach.";
   } else { h.textContent="starts with the session"; h.className="big rel"; $("quest").replaceChildren(); $("holdnote").textContent=""; }
   // calibration
   const c=s.calibration, teachOn=s.phase==="AWAITING CALIBRATION";
@@ -187,12 +193,12 @@ function render(s){
   const ready=(s.checks||[]).length>0&&s.checks.every(k=>k.ok); $("armbtn").disabled=!(s.phase==="DISARMED"&&ready); $("disbtn").disabled=!["ARMED","RUNNING","PAUSED"].includes(s.phase);
   // move
   const names=c.done?c.spots.map(x=>x.name):[];
-  once("names", names, ()=>{ options($("thing"),names,[["","— say where —"]]); options($("dst"),names,[["","a spot picked at random"]]); options($("tw_on"),names,[["","— which spot —"]]); options($("e_on"),names,[["","— which spot —"]]); lastThing=undefined; });
+  once("names", names, ()=>{ options($("thing"),names,[["","— say where —"]]); options($("dst"),names,[["","a spot picked at random"]]); options($("tw_on"),names,[["","— which spot —"]]); options($("e_on"),names,[["","— which spot —"]]); options($("ph_on"),names,[["","— which spot —"]]); lastThing=undefined; });
   const st=s.stack, nNow=st?st.n:undefined; if(nNow!==lastN){ lastN=nNow; if(st){ $("tw_n").value=st.n==null?"":st.n; $("tw_on").value=st.on; } }
   const on=$("tw_on").value, feeds=names.filter(n=>n!==on).slice(0,6); ["tw_build","tw_down","tw_loop"].forEach(id=>{ $(id).disabled=s.phase!=="ARMED"; });
   $("tw_note").textContent=!c.done?"":(!on?"Choose the spot the tower stands on. One block stands on every other spot.":`One block stands on each of ${feeds.join(", ")}. They go onto ${on} in that order: the first at the taught height, each next one a block height higher, let go ${s.drop_mm} mm above the one below. Taking down goes top first, every block back to its own spot.`+(st&&st.n==null?" The last run did not end as planned: say how many blocks stand on the tower now.":""));
   if(s.thing_at!==lastThing){ lastThing=s.thing_at; $("thing").value=s.thing_at||""; }
-  const j=s.job, busy=["RUNNING","PAUSED"].includes(s.phase); $("gobtn").disabled=s.phase!=="ARMED"; $("nextbtn").disabled=!(j&&j.waiting&&busy);
+  const j=s.job, busy=["RUNNING","PAUSED"].includes(s.phase); $("gobtn").disabled=s.phase!=="ARMED"; $("phbtn").disabled=s.phase!=="ARMED"; $("nextbtn").disabled=!(j&&j.waiting&&busy);
   $("outcome").textContent=!j?"":(busy? `Move ${Math.min(j.done+1,j.total)} of ${j.total}: ${j.text||(j.src+" to "+j.dst)}`+(j.rehearse?" (rehearsal)":"")+(j.waiting?" · waiting for Next step":"") : `Last: ${j.done} of ${j.total} done. ${j.outcome||""}`);
   $("steps").replaceChildren(...(j&&busy?j.steps:[]).map((n,i)=>{const e=document.createElement("li"); e.textContent=n; if(j.i!=null){ if(i<j.i)e.className="past"; if(i===j.i)e.className="cur"; } return e;}));
   // camera
@@ -208,10 +214,15 @@ function render(s){
   const a=s.arm; dl($("arm"), a? [["Controller error",a.error==null?"…":(a.error? "ERROR "+a.error:"none")],["Height above the lowest spot",a.height_mm==null?"known once calibrated":f1(a.height_mm)+" mm"],
     ["Measured against planned",a.lag_mm==null?"…":f1(a.lag_mm)+" mm apart"],["Moving",a.moving?"yes":"no"]].concat(a.read_error?[["Read problem",a.read_error]]:[]) : [["Status","no session"]]);
   const lg=$("log"), atEnd=lg.scrollTop+lg.clientHeight>=lg.scrollHeight-8; lg.textContent=s.log.join("\n"); if(atEnd) lg.scrollTop=lg.scrollHeight;
+  const active=["RUNNING","PAUSED"].includes(s.phase)||!!c.busy; if(big&&window.WASACTIVE&&!active){ big=false; halt(); } window.WASACTIVE=active;
   window.HOLD=s.connected?s.hold:null; window.PHASE=s.phase; window.KEYHOLD=!!s.key_hold; window.BUSY=!!c.busy;
+  show("moveswitch",s.connected&&s.hold==="page"); if(!(s.connected&&s.hold==="page")) down=false; paint();
+  document.querySelectorAll(".pad i, button[data-t] i").forEach(x=>{ x.hidden=s.hold==="page"; });
 }
 function pickArm(){ const k=(document.querySelector("input[name=arm]:checked")||{}).value; show("questrow",k==="stand-in"||window.KEYHOLD); }
-async function tick(){ try{ render(await (await fetch("/api/state")).json()); }catch(e){ $("phase").textContent="NO ANSWER"; $("hint").textContent="The program is not answering. Assume nothing about the arm."; } }
+let asking=0;
+async function tick(){ const t=performance.now(); if(asking&&t-asking<3000) return; asking=t;  // one question at a time
+  try{ render(await (await fetch("/api/state")).json()); }catch(e){ $("phase").textContent="NO ANSWER"; $("hint").textContent="The program is not answering. Assume nothing about the arm."; } finally{ if(asking===t) asking=0; } }
 setInterval(tick,250); tick();
 $("stop").onclick=()=>post("/api/stop");
 $("startbtn").onclick=()=>{ const k=(document.querySelector("input[name=arm]:checked")||{}).value; post("/api/session",{start:true,arm:k,hold:(k==="stand-in"||window.KEYHOLD)&&!$("usequest").checked?"page":"quest"}); };
@@ -224,35 +235,54 @@ setInterval(()=>{ if(waiting&&!window.BUSY&&window.PHASE==="AWAITING CALIBRATION
 document.querySelectorAll("button[data-j]").forEach(b=>{ b.onclick=()=>jog(b.dataset.j); });
 const turn=dir=>{ if(window.BUSY){ waiting=()=>turn(dir); return; } window.BUSY=true; return post("/api/turn",{dir:dir,deg:+$("jogdeg").value}); };
 document.querySelectorAll("button[data-t]").forEach(b=>{ b.onclick=()=>turn(b.dataset.t); });
-$("levelbtn").onclick=()=>post("/api/level"); $("ftbtn").onclick=()=>post("/api/find_table",{wide:+$("ft_w").value,deep:+$("ft_d").value}); $("fthere").onclick=()=>post("/api/find_table",{wide:+$("ft_w").value,deep:+$("ft_d").value,here:true}); $("gopen").onclick=()=>post("/api/grip",{close:false}); $("gclose").onclick=()=>post("/api/grip",{close:true});
-// the lab's own nudge keys: W/S away from and towards the base, A/D left and right, Q/E up and down
-const KEYS={KeyW:"fwd",KeyS:"back",KeyA:"left",KeyD:"right",KeyQ:"up",KeyE:"down"};
+$("levelbtn").onclick=()=>post("/api/level"); $("ftbtn").onclick=()=>post("/api/find_table",{wide:+$("ft_w").value,deep:+$("ft_d").value}); $("fthere").onclick=()=>post("/api/find_table",{wide:+$("ft_w").value,deep:+$("ft_d").value,here:true}); $("ftsame").onclick=()=>post("/api/find_table",{wide:+$("ft_w").value,deep:+$("ft_d").value,as_before:true}); $("gopen").onclick=()=>post("/api/grip",{close:false}); $("gclose").onclick=()=>post("/api/grip",{close:true,width:$("gwidth").value===""?null:+$("gwidth").value});
+// the nudge keys: the arrows (up = away from the base, down = towards it, left, right), Q / E or Page Up / Page Down for up and down
+const KEYS={ArrowUp:"fwd",ArrowDown:"back",ArrowLeft:"left",ArrowRight:"right",KeyQ:"up",KeyE:"down",PageUp:"up",PageDown:"down"};
 const TURN={KeyZ:"ccw",KeyC:"cw"};
-addEventListener("keydown",e=>{ if(!(KEYS[e.code]||TURN[e.code])||window.PHASE!=="AWAITING CALIBRATION"||e.repeat||e.metaKey||e.ctrlKey||e.target.tagName==="TEXTAREA"||(e.target.tagName==="INPUT"&&["text","number"].includes(e.target.type))) return; e.preventDefault(); KEYS[e.code]? jog(KEYS[e.code]) : turn(TURN[e.code]); });
+addEventListener("keydown",e=>{ if(window.HOLD==="page"||!(KEYS[e.code]||TURN[e.code])||window.PHASE!=="AWAITING CALIBRATION"||e.repeat||e.metaKey||e.ctrlKey||e.target.tagName==="TEXTAREA"||(e.target.tagName==="INPUT"&&["text","number"].includes(e.target.type))) return; e.preventDefault(); KEYS[e.code]? jog(KEYS[e.code]) : turn(TURN[e.code]); });
 $("spotbtn").onclick=()=>post("/api/spot",{name:$("spotname").value}); $("lift").onchange=()=>post("/api/lift",{mm:+$("lift").value});
 $("armbtn").onclick=()=>post("/api/arm",{on:true}); $("disbtn").onclick=()=>post("/api/arm",{on:false});
 $("thing").onchange=()=>{ if($("thing").value) post("/api/thing",{spot:$("thing").value}); };
 $("gobtn").onclick=()=>post("/api/move",{dst:$("dst").value||null,count:+$("count").value,rehearse:$("rehearse").checked,step:$("step").checked});
-$("nextbtn").onclick=()=>post("/api/next");
+$("nextbtn").onclick=()=>post("/api/next"); $("phbtn").onclick=()=>post("/api/put_held",{dst:$("ph_on").value});
 const tower=what=>post("/api/tower",{on:$("tw_on").value,block_mm:+$("tw_h").value,n_now:$("tw_n").value===""?null:+$("tw_n").value,what:what,rounds:+$("tw_r").value,rehearse:$("rehearse").checked,step:$("step").checked});
 $("lookbtn").onclick=()=>post("/api/look"); $("e_show").onclick=()=>post("/api/show_table",{kind:$("e_kind").value,n:+$("e_n").value,step:$("step").checked});
 $("e_build").onclick=()=>post("/api/build_seen",{on:$("e_on").value,rehearse:$("rehearse").checked,step:$("step").checked});
 $("tw_build").onclick=()=>tower("build"); $("tw_down").onclick=()=>tower("down"); $("tw_loop").onclick=()=>tower("loop");
-// With the stand-in arm the space bar stands in for the grip. Like the headset, the page reports its state ALL the time
-// (pressed or not), so that a closed or frozen page reads as "no signal", not as "released and fine".
-// A button or a tick box that was just clicked keeps the keyboard, and the space bar would press it again: it is let go of, so that the space bar is only ever the switch.
-let down=false; const typing=e=>e.target.tagName==="TEXTAREA"||(e.target.tagName==="INPUT"&&["text","number"].includes(e.target.type));
+// Without the Quest the switch is the big button at the top of this page. Click it and the arm may move; click it
+// again, or press the SPACE BAR or ESC, and it stops at once. No other key does anything. The page reports the switch
+// ALL the time, so that a closed or frozen page reads as "no signal", not as "on". The switch is put to off by the
+// page itself when a task is asked for (nothing starts before the switch is clicked for it) and when a task has ended.
+// Nudging, turning and the gripper leave it on. It stays on when another window is in front (asked for on this rig,
+// so that a long task goes on while its operator reads something else): the space bar and Esc then stop nothing,
+// only this page's own buttons and the red emergency stop do. A browser slows the clocks of a page that is not in
+// front to one tick a second, which would read as a lost signal; the tick therefore comes from a worker, whose clock
+// is not slowed. The report itself is still sent by the page, so a page that hangs still falls silent.
+let down=false, big=false; const typing=e=>e.target.tagName==="TEXTAREA"||(e.target.tagName==="INPUT"&&["text","number"].includes(e.target.type));
 addEventListener("change",e=>{ if(e.target.tagName==="SELECT"||(e.target.tagName==="INPUT"&&e.target.type==="number")) e.target.blur(); });
 addEventListener("keydown",e=>{ if(e.code==="Enter"&&e.target.tagName==="INPUT") e.target.blur(); });
 addEventListener("click",e=>{ const b=e.target.closest&&e.target.closest("button,input[type=checkbox],input[type=radio]"); if(b) b.blur(); });
-const tell=()=>{ if(window.HOLD==="page") fetch("/api/hold",{method:"POST",headers:{"Content-Type":"application/json","X-Token":TOKEN},body:JSON.stringify({pressed:down}),keepalive:true}).catch(()=>{}); };
-setInterval(tell,50);
-addEventListener("keydown",e=>{ if(e.code!=="Space"||window.HOLD!=="page"||typing(e)) return; e.preventDefault(); if(document.activeElement&&document.activeElement!==document.body) document.activeElement.blur(); down=true; });
-addEventListener("keydown",e=>{ if(!["KeyF","KeyR"].includes(e.code)||window.PHASE!=="AWAITING CALIBRATION"||e.repeat||e.metaKey||e.ctrlKey||typing(e)) return; e.preventDefault(); post("/api/grip",{close:e.code==="KeyF"}); });
-let upTimer=null;
-addEventListener("keydown",e=>{ if(e.code==="Space"&&upTimer){ clearTimeout(upTimer); upTimer=null; } },true);
-addEventListener("keyup",e=>{ if(e.code!=="Space") return; if(window.HOLD==="page"&&!typing(e)) e.preventDefault();
-  clearTimeout(upTimer); upTimer=setTimeout(()=>{ upTimer=null; down=false; tell(); },40); }); addEventListener("blur",()=>{ down=false; tell(); });
+// The switch is reported five times a second, and at once when it changes. One report at a time: the next one waits
+// for the answer to the last (or gives up on it after a second), so that reports can never pile up in the browser.
+// (Twenty a second, each kept alive by the browser, made the tab and the browser use half a processor each until
+// the tab stopped answering.)
+let told=0, flying=0, said=null;
+const tell=(now)=>{ const t=performance.now(); if(window.HOLD!=="page") return;
+  if(now!==true&&((flying&&t-flying<1000)||(t-told<190&&said===down))) return;
+  told=t; flying=t; said=down; const mine=t;
+  fetch("/api/hold",{method:"POST",headers:{"Content-Type":"application/json","X-Token":TOKEN},body:JSON.stringify({pressed:down,t:t,page:PAGE_ID})})
+    .then(r=>r.text()).catch(()=>{}).finally(()=>{ if(flying===mine) flying=0; }); };
+const paint=()=>{ const b=$("moveswitch"); b.className=down?"on":"off"; b.textContent=down?"MOVING ALLOWED · click to stop":"MOVING OFF · click to allow"; };
+const halt=()=>{ if(down){ down=false; tell(true); } paint(); };
+// The tick comes from a worker (a browser slows the clock of a page that is not in front to one tick a second, a
+// worker's it does not); the worker is kept in a variable of the page so that it is not thrown away, and the page's
+// own clock stands behind it and makes a silent worker anew.
+const ticker=()=>{ try{ if(window.TICKER) window.TICKER.terminate(); window.TICKER=new Worker(URL.createObjectURL(new Blob(["setInterval(()=>postMessage(0),200)"],{type:"text/javascript"})));
+  window.TICKER.onmessage=()=>{ window.TICKED=performance.now(); tell(); }; }catch(e){ window.TICKER=null; } };
+ticker();
+setInterval(()=>{ const now=performance.now(); tell(); if(now-(window.TICKED||0)>3000){ window.TICKED=now; ticker(); } },200);
+$("moveswitch").onclick=()=>{ down=!down; tell(true); paint(); };
+addEventListener("keydown",e=>{ if(window.HOLD!=="page"||(e.code!=="Space"&&e.code!=="Escape")) return; halt(); if(!typing(e)) e.preventDefault(); },true);
 </script></body></html>
 """
 
@@ -260,6 +290,7 @@ addEventListener("keyup",e=>{ if(e.code!=="Space") return; if(window.HOLD==="pag
 def make_server(session, port=8777):
     """The HTTP server for a session (not started). `server.token` is what the page's buttons must send."""
     token = secrets.token_urlsafe(18)
+    pages = [0]  # how many times the page was opened: the last one opened is the only one whose switch counts
 
     def act(path, b):
         if path == "/api/stop":
@@ -275,9 +306,9 @@ def make_server(session, port=8777):
         elif path == "/api/level":
             session.level()
         elif path == "/api/find_table":
-            session.find_table(b.get("wide", 200), b.get("deep", 140), bool(b.get("here")))
+            session.find_table(b.get("wide", 200), b.get("deep", 140), bool(b.get("here")), bool(b.get("as_before")))
         elif path == "/api/grip":
-            session.grip(bool(b.get("close")))
+            session.grip(bool(b.get("close")), b.get("width"))
         elif path == "/api/spot":
             session.remove_spot(str(b.get("name"))) if b.get("remove") else session.save_spot(b.get("name"))
         elif path == "/api/lift":
@@ -292,6 +323,8 @@ def make_server(session, port=8777):
             session.tower(str(b.get("on")), b.get("block_mm"), str(b.get("what", "build")), b.get("rounds", 1), b.get("n_now"), bool(b.get("rehearse")), bool(b.get("step")))
         elif path == "/api/next":
             session.next_step()
+        elif path == "/api/put_held":
+            session.put_held(str(b.get("dst")))
         elif path == "/api/look":
             session.look()
         elif path == "/api/show_table":
@@ -301,7 +334,8 @@ def make_server(session, port=8777):
         elif path == "/api/hold":
             if session.hold != "page":
                 raise Refused("with this arm the only hold-to-run switch is the Quest grip")
-            session.dm.feed(bool(b.get("pressed")))
+            if b.get("page") == pages[0]:
+                session.page_hold(b.get("pressed"), b.get("t"))
         else:
             return False
         return True
@@ -328,9 +362,10 @@ def make_server(session, port=8777):
             if not self._local():
                 return self._send(dict(error="this page answers on 127.0.0.1 only"), HTTPStatus.FORBIDDEN)
             if self.path == "/":
-                return self._send(PAGE.replace("__TOKEN__", token).encode(), kind="text/html; charset=utf-8")
+                pages[0] += 1
+                return self._send(PAGE.replace("__TOKEN__", token).replace("__PAGE__", str(pages[0])).encode(), kind="text/html; charset=utf-8")
             if self.path == "/api/state":
-                return self._send(session.state())
+                return self._send({**session.state(), "page": pages[0]})
             if self.path.split("?")[0] == "/api/sight.jpg" and session.sight_jpg():
                 return self._send(session.sight_jpg(), kind="image/jpeg")
             return self._send(dict(error="not found"), HTTPStatus.NOT_FOUND)
