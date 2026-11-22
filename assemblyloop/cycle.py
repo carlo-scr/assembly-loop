@@ -25,6 +25,10 @@ class WrongGrip(NothingHeld):
     the wrong way round). The arm was lifted clear with the gripper open."""
 
 
+class NotHeld(NothingHeld):
+    """The camera on the gripper saw the block stay behind when the gripper went up: the jaws did not hold it."""
+
+
 @dataclass
 class Params:
     travel: float = 100.0  # across, at the travel height, with nothing near

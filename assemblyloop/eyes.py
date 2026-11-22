@@ -319,6 +319,29 @@ def on_mat(bgr, px, radius_px):
     return float(((hsv[..., 1] < 80) & (hsv[..., 2] > 45) & (hsv[..., 2] < 150)).mean()) > 0.85
 
 
+def same_patch(before, after, colour=None):
+    """For a camera that is fixed to the gripper: two pictures, one with the jaws just closed on a block and one after
+    the gripper has gone up. A block that is HELD goes up with the camera and shows in the same place in both; a block
+    that stayed on the table has moved away and shrunk in the second. Returns how much the best pair of patches (of
+    `colour`, if given) covers each other, 0 to 1, and how large that patch is [pixels]."""
+    a = [b for b in find_blobs(before) if colour is None or b.colour == colour]
+    c = [b for b in find_blobs(after) if colour is None or b.colour == colour]
+    best = (0.0, 0)
+    for p in a:
+        for q in c:
+            if p.colour != q.colour:
+                continue
+            x0, y0 = min(p.x0, q.x0), min(p.y0, q.y0)
+            x1, y1 = max(p.x0 + p.mask.shape[1], q.x0 + q.mask.shape[1]), max(p.y0 + p.mask.shape[0], q.y0 + q.mask.shape[0])
+            m, n = np.zeros((y1 - y0, x1 - x0), bool), np.zeros((y1 - y0, x1 - x0), bool)
+            m[p.y0 - y0:p.y0 - y0 + p.mask.shape[0], p.x0 - x0:p.x0 - x0 + p.mask.shape[1]] = p.mask
+            n[q.y0 - y0:q.y0 - y0 + q.mask.shape[0], q.x0 - x0:q.x0 - x0 + q.mask.shape[1]] = q.mask
+            cover = float((m & n).sum()) / float((m | n).sum())
+            if cover > best[0]:
+                best = (cover, int(p.area))
+    return best
+
+
 def mat_seen(bgr):
     """How much grey mat the picture shows (a number to compare pictures by): the arm, wherever it waits, hides some."""
     hsv = cv2.cvtColor(cv2.resize(bgr, None, fx=0.25, fy=0.25, interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2HSV)

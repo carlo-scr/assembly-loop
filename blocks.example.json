@@ -1,7 +1,6 @@
 {
  "finger_mm": 40.0,
  "jaw_mm": 85.0,
- "jaw_offset_mm": 4.0,
  "kinds": [
   {
    "name": "red cube",
@@ -27,9 +26,9 @@
    "name": "red plank",
    "shape": "box",
    "size_mm": [
-    90.0,
-    31.0,
-    17.5
+    57.0,
+    25.4,
+    12.7
    ],
    "colour": "red"
   },
@@ -66,9 +65,9 @@
    "name": "yellow plank",
    "shape": "box",
    "size_mm": [
-    90.0,
-    31.0,
-    17.5
+    57.0,
+    25.4,
+    12.7
    ],
    "colour": "yellow"
   },
@@ -105,9 +104,9 @@
    "name": "green plank",
    "shape": "box",
    "size_mm": [
-    90.0,
-    31.0,
-    17.5
+    57.0,
+    25.4,
+    12.7
    ],
    "colour": "green"
   },
@@ -144,9 +143,9 @@
    "name": "blue plank",
    "shape": "box",
    "size_mm": [
-    90.0,
-    31.0,
-    17.5
+    57.0,
+    25.4,
+    12.7
    ],
    "colour": "blue"
   },

@@ -577,3 +577,65 @@ def test_blocks_are_put_onto_the_widest_one_where_it_lies_without_any_spot_for_i
     ses.look()
     with pytest.raises(Refused, match="at least two"):
         ses.build_seen("*")
+
+
+class Wrist:
+    """A stand-in for the camera on the gripper: it looks down past the fingers. A block that is held shows in the
+    middle whatever the gripper does; one that lies on the table shows smaller, and further off, the higher the gripper is."""
+
+    def __init__(self, ses):
+        self.ses, self.n = ses, 0
+
+    def grab(self):
+        self.n += 1
+        a, im = self.ses.arm, np.full((360, 640, 3), (110, 100, 95), np.uint8)
+        for name, at in a.bricks.items():
+            colour = PAINT[CAT.kind(self.ses.camera.what[name][0]).colour]
+            if a.holding is not None and a.holding[0] == name:
+                cv2.rectangle(im, (260, 150), (380, 210), colour, -1)
+                continue
+            d = at - a.p
+            far = 200.0 / (200.0 - float(d @ a.up))  # 200 mm from the camera to the fingertips
+            x, y = 320 + 2.0 * far * d[0], 180 + 2.0 * far * d[1]
+            cv2.rectangle(im, (int(x - 60 * far), int(y - 30 * far)), (int(x + 60 * far), int(y + 30 * far)), colour, -1)
+        return im
+
+
+def test_the_grippers_camera_sees_whether_the_block_came_along_and_the_jaws_close_further_if_not(ses):
+    from assemblyloop.eyes import same_patch
+
+    held, left = np.full((360, 640, 3), (110, 100, 95), np.uint8), np.full((360, 640, 3), (110, 100, 95), np.uint8)
+    cv2.rectangle(held, (260, 150), (380, 210), PAINT["blue"], -1)
+    cv2.rectangle(left, (278, 158), (362, 200), PAINT["blue"], -1)  # the same block, 80 mm further from the camera
+    assert same_patch(held, held, "blue")[0] > 0.95 and same_patch(held, left, "blue")[0] < 0.55 and same_patch(held, held, "green") == (0.0, 0)
+
+    shown(ses)
+    ses.wrist_camera = Wrist(ses)
+    lay_out(ses, {"slab": ("blue slab", 0, 430.0, 70.0, 100.0), "bar": ("green bar", 0, 445.0, -95.0, 30.0)})
+    ses.look()
+    a = ses.arm
+    a.needs = 350  # jaws that are not sent to 35 mm or closer hold nothing: the slab (40 mm, first sent to 37.5) slips twice
+    n = len(a.log)
+    ses.build_seen("T")
+    assert until(lambda: ses.worker is None, 180)
+    assert ses.job["outcome"] == "done" and ses.stack["n"] == 2, (ses.job["outcome"], list(ses.lines)[-8:])
+    closes = [e[2] for e in a.log[n:] if e[0] == "grip" and 0 < e[2] < 800]
+    assert closes == [375, 360, 345, 225], closes  # the slab three times, each 1.5 mm further; the bar at once
+    seen = [json.loads(line)["grip_seen"] for line in open(ses.log_dir / "moves.jsonl") if '"grip_seen"' in line]
+    assert len(seen) == 4 and max(seen[:2]) < 0.55 and min(seen[2:]) > 0.9, seen
+    assert sum("once more, the jaws closed" in line for line in ses.lines) == 2 and sum("come along" in line for line in ses.lines) == 2
+    d = a.bricks["slab"] - ses.spots.grasp("T")
+    assert np.linalg.norm(d - (d @ ses.spots.up) * ses.spots.up) < 2.5  # ... and both ended on the tower
+    # jaws that never hold: three tries, then the job stops and says so
+    lay_out(ses, {"slab": ("blue slab", 0, 430.0, 70.0, 100.0)})
+    a.needs = 50
+    ses.look()
+    ses.build_seen("T")
+    assert until(lambda: ses.worker is None, 180)
+    assert "stay behind" in ses.job["outcome"] and "three times over" in ses.job["outcome"] and ses.phase() == "ARMED", ses.job["outcome"]
+    # without a camera on the gripper nothing changes
+    ses.wrist_camera, a.needs = None, None
+    lay_out(ses, {"slab": ("blue slab", 0, 430.0, 70.0, 100.0)})
+    ses.look()
+    ses.build_seen("T")
+    assert until(lambda: ses.worker is None, 180) and ses.job["outcome"] == "done"

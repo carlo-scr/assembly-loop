@@ -278,6 +278,8 @@ class FakeArm:
         for name, at in self.bricks.items():
             off = at - self.p
             high = float(off @ self.up)  # the jaws must be at the brick's height, and within reach along the plate
+            if getattr(self, "needs", None) is not None and counts > self.needs:
+                break  # (to try the grip's check: jaws that were not sent far enough hold nothing)
             if abs(high) <= 3.0 and float(np.linalg.norm(off - high * self.up)) <= 20.0:
                 # where the jaws come to rest: on a brick of known width, at that width; on one of unknown width, where they
                 # were sent if that was a gentle close (the fingers give, as the real ones do), else on a 31.5 mm brick

@@ -142,7 +142,7 @@ def demo_spots():
     return s
 
 
-def plan_move(spots, src, dst, here, P, rehearse=False, src_up=0.0, dst_up=0.0, release_counts=None, grip_mm=None):
+def plan_move(spots, src, dst, here, P, rehearse=False, src_up=0.0, dst_up=0.0, release_counts=None, grip_mm=None, tighter_mm=0.0):
     """Steps to take the thing at `src` and put it down at `dst`, starting from wherever the arm is (`here`).
     `src_up` / `dst_up` [mm] raise the pick-up / the put-down above the taught spot (the levels of a tower).
     `release_counts`: let go by opening only this far (a design's block, whose neighbours stand close), not fully.
@@ -152,6 +152,7 @@ def plan_move(spots, src, dst, here, P, rehearse=False, src_up=0.0, dst_up=0.0, 
     whether it arrived, sight.py). It can still tell that something WIDER is there, which stops the jaws short: that
     stops the move (WrongGrip). With `P.squeeze_mm` at 0 the jaws close as far as they go, and closing to any other
     width than the block's stops the move.
+    `tighter_mm`: close this much further than that (a second try, after the block was seen to stay behind).
     A rehearsal does the same travel at the travel height and never comes down."""
     if src == dst:
         raise Refused("from and to are the same spot")
@@ -167,7 +168,7 @@ def plan_move(spots, src, dst, here, P, rehearse=False, src_up=0.0, dst_up=0.0, 
         first = gs + min(20.0, spots.lift) * up
         S += [dict(name=f"lower around the thing at {ns}", kind="move", to=gs, speed=P.slow, stall_mm=P.stall_mm),
               dict(name="close on it", kind="grip", counts=P.shut_counts, must_hold=True, expect_mm=grip_mm) if not grip_mm or P.squeeze_mm <= 0 else
-              dict(name="close on it, gently", kind="grip", counts=max(0, int(round((float(grip_mm) - P.squeeze_mm - P.jaw_offset_mm) * 10.0))), expect_mm=grip_mm, gentle=True),
+              dict(name="close on it, gently", kind="grip", counts=max(0, int(round((float(grip_mm) - P.squeeze_mm - P.jaw_offset_mm - float(tighter_mm)) * 10.0))), expect_mm=grip_mm, gentle=True),
               dict(name="read the grasp", kind="read"),
               dict(name="lift it, slowly at first", kind="move", to=first, speed=P.press, stall_mm=P.pull_stall_mm, let_go_if_blocked=True),
               dict(name="lift to the travel height", kind="move", to=hs, speed=P.lift)]

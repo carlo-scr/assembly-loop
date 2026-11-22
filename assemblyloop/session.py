@@ -28,7 +28,7 @@ from pathlib import Path
 import numpy as np
 
 from .arms import ArmFault, FakeArm, XArm, run_fake_clock
-from .cycle import NothingHeld, Params, execute
+from .cycle import NotHeld, NothingHeld, Params, execute
 from .deadman import Deadman, QuestDeadman
 from .feeds import TABLE_CAMERA, MadeUp, same_device
 from .guard import Blocked, Guard, Limits, Refused, Released
@@ -727,17 +727,29 @@ class Session(Sight):
                 text = leg.get("text") or f"{at} to {dst}"
                 if leg.get("prepare"):  # a camera job: the block is taken where the newest picture shows it
                     leg["prepare"]()
-                here = g.where()
-                steps = plan_move(sp, at, dst, here, self.P, rehearse=job["rehearse"], src_up=leg["su"], dst_up=leg["du"], release_counts=leg.get("release"), grip_mm=leg.get("width"))
-                self._reach([s["to"] for s in steps if s["kind"] == "move"], sp.rpy, text)
-                top = float(here @ sp.up) + 1.0  # the arm may start above the travel height (after a tower): it comes down first
-                g.lim = sp.limits(floor_w=min(float(here @ sp.up), sp.travel_w()) - 1.0, ceil_w=top, start=here, **self.limit_kw) if job["rehearse"] else sp.limits(ceil_w=top, start=here, **self.limit_kw)
-                with self.lock:
-                    job.update(steps=steps, i=None, src=at, dst=dst, text=text)
-                self.say(f"move {k + 1} of {job['total']}: {text}" + (" (rehearsal in the air)" if job["rehearse"] else ""))
-                if leg.get("first"):
-                    leg["first"]()
-                rec = execute(g, steps, self.P, air=job["rehearse"], before=before)
+                tries = 0
+                while True:  # the same block again, the jaws closed a little further, if the gripper's camera saw it stay behind
+                    here = g.where()
+                    steps = plan_move(sp, at, dst, here, self.P, rehearse=job["rehearse"], src_up=leg["su"], dst_up=leg["du"], release_counts=leg.get("release"), grip_mm=leg.get("width"),
+                                      tighter_mm=1.5 * tries)
+                    self._reach([s["to"] for s in steps if s["kind"] == "move"], sp.rpy, text)
+                    top = float(here @ sp.up) + 1.0  # the arm may start above the travel height (after a tower): it comes down first
+                    g.lim = sp.limits(floor_w=min(float(here @ sp.up), sp.travel_w()) - 1.0, ceil_w=top, start=here, **self.limit_kw) if job["rehearse"] else sp.limits(ceil_w=top, start=here, **self.limit_kw)
+                    with self.lock:
+                        job.update(steps=steps, i=None, src=at, dst=dst, text=text)
+                    if not tries:
+                        self.say(f"move {k + 1} of {job['total']}: {text}" + (" (rehearsal in the air)" if job["rehearse"] else ""))
+                        if leg.get("first"):
+                            leg["first"]()
+                    try:
+                        rec = execute(g, steps, self.P, air=job["rehearse"], before=before, after=self._grip_watch(job, leg))
+                        break
+                    except NotHeld as e:
+                        g.grip(self.P.open_counts, "open again: the block stayed behind")
+                        tries += 1
+                        if tries > 2:
+                            raise NothingHeld(f"{e}, three times over, the jaws closed up to 3 mm further") from None
+                        self.say(f"  {e}: once more, the jaws closed {1.5 * tries:g} mm further")
                 with open(self.log_dir / "moves.jsonl", "a") as fh:
                     fh.write(json.dumps(dict(t=time.time(), src=at, dst=dst, src_up=leg["su"], dst_up=leg["du"], rehearse=job["rehearse"], **rec), default=float) + "\n")
                 if rec["blocked"]:

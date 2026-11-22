@@ -39,9 +39,13 @@ import numpy as np
 
 from .arms import matrix_rpy, rpy_matrix, twist_deg
 from .blocks import Catalogue, plan_tower
+from .cycle import NotHeld
 from .guard import Refused
 
 OFF_MM, TURN_DEG, FIT, VISIBLE = 8.0, 12.0, 0.45, 0.3  # a block counts as in place within these; below FIT it is not there; less VISIBLE is not judged
+
+
+HELD = 0.55  # a held block covers at least this much of where it showed when the jaws closed (seen from the gripper's own camera)
 
 
 class NotAsPlanned(RuntimeError):
@@ -321,6 +325,57 @@ class Sight:
         p = setup.table.point(setup.wait[0], setup.wait[1], setup.w_grasp)
         if not (self.arm.reach(p, sp.rpy) or self.arm.reach(p + sp.lift * sp.up, sp.rpy)):
             sp.at["wait"], sp.rot["wait"] = p, np.asarray(sp.rpy, float).copy()
+
+    # ------------------------------------------------------------------ the camera on the gripper: did the block come along?
+    def _wrist_grab(self):
+        """One picture from the camera on the gripper of the arm in use (the upper one of the two), or None if there
+        is none. `wrist_camera`, if set, is anything with grab() (the tests' stand-in)."""
+        cam = getattr(self, "wrist_camera", None)
+        if cam is not None:
+            return cam.grab()
+        if self.fake:
+            return None
+        from .feeds import rig_cameras
+
+        dev = next((c["device"] for c in rig_cameras() if self.chosen in c["arms"] and c["id"].startswith("grip") and c["id"].endswith("upper")), None)
+        if dev is None:
+            return None
+        eyes, feeds = self._eyes(), getattr(self, "feeds", None)
+        if feeds is None:
+            return eyes.grab(dev, (1280, 720), warm=5)
+        with feeds.borrow(dev):
+            return eyes.grab(dev, (1280, 720), warm=5)
+
+    def _grip_watch(self, job, leg):
+        """For a block of a camera job: a picture from the gripper's camera when the jaws have closed and another when
+        the gripper is up at the travel height. A block that is held shows in the same place in both (it goes up with
+        the camera); one that stayed on the table does not, and the pick is tried again (NotHeld). Returns what
+        `execute` calls after every step, or None when there is nothing to watch."""
+        if job["rehearse"] or not job.get("watch") or not leg.get("width"):
+            return None
+        colour, shots, eyes = ((leg.get("source") or {}).get("kind") and leg["source"]["kind"].colour), {}, self._eyes()
+
+        def after(s):
+            try:
+                if s["name"].startswith("close on it"):
+                    shots["closed"] = self._wrist_grab()
+                    return
+                if s["name"] != "lift to the travel height" or shots.get("closed") is None:
+                    return
+                up = self._wrist_grab()
+                cover, area = eyes.same_patch(shots.pop("closed"), up, colour)
+            except (Refused, OSError, ValueError) as e:  # no picture: the grip is not checked, the job goes on (the check after the put-down still looks)
+                if not job.get("wrist_said"):
+                    job["wrist_said"] = True
+                    self.say(f"  the gripper's camera gives no picture ({e}): the grip is not looked at")
+                return
+            with open(self.log_dir / "moves.jsonl", "a") as fh:
+                fh.write(json.dumps(dict(t=time.time(), grip_seen=round(cover, 2), patch_px=area, block=leg["src"])) + "\n")
+            if cover < HELD:
+                raise NotHeld(f"the gripper's camera saw the {leg['src']} stay behind (what it held covers {100 * cover:.0f}% of where it was)")
+            self.say(f"  the gripper's camera sees the block come along ({100 * cover:.0f}%)")
+
+        return after
 
     def _aside(self, at):
         """Places above the taught spots, best first for the camera: where the arm shows farthest from the build."""
