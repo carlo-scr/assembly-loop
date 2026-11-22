@@ -110,3 +110,17 @@ def test_the_tower_is_widest_first_and_says_what_it_leaves_out():
     with pytest.raises(Refused):
         Catalogue([Kind("x", "box", (10.0, 10.0))]).check()
     assert Catalogue.from_dict(CAT.to_dict()).kinds == CAT.kinds
+
+
+def test_fingers_whose_gap_is_wider_than_the_gripper_says_are_closed_further():
+    from assemblyloop.cycle import Params
+    from assemblyloop.spots import demo_spots, plan_move
+
+    cat = Catalogue.from_dict({**CAT.to_dict(), "jaw_offset_mm": 4.0})
+    assert cat.jaw_offset_mm == 4.0 and Catalogue.from_dict(cat.to_dict()).jaw_offset_mm == 4.0 and CAT.jaw_offset_mm == 0.0
+    with pytest.raises(Refused):
+        Catalogue.from_dict({**CAT.to_dict(), "jaw_offset_mm": 40.0})
+    sp = demo_spots()
+    close = lambda P: next(s for s in plan_move(sp, "A", "B", sp.above(sp.grasp("A")), P, grip_mm=31.0) if s["name"].startswith("close on it"))  # noqa: E731
+    assert close(Params())["counts"] == 285  # 2.5 mm under 31 mm, as the gripper counts
+    assert close(Params(jaw_offset_mm=4.0))["counts"] == 245  # the same gap between fingers that stand 4 mm wider apart than it says

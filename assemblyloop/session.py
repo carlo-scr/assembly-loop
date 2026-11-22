@@ -470,12 +470,12 @@ class Session(Sight):
                 width_mm = float(width_mm)
                 if not 5.0 <= width_mm <= 84.0:
                     raise Refused("the width of the block is between 5 and 84 mm")
-                gentle = max(0, int(round((width_mm - self.P.squeeze_mm) * 10.0)))
+                gentle = max(0, int(round((width_mm - self.P.squeeze_mm - self.P.jaw_offset_mm) * 10.0)))
 
             def act(g):
                 if gentle is not None:
                     g.grip(gentle, "close the gripper, gently")
-                    return f"closed to {gentle / 10.0:.0f} mm, for a block {width_mm:g} mm wide"
+                    return f"closed to {gentle / 10.0 + self.P.jaw_offset_mm:.0f} mm, for a block {width_mm:g} mm wide"
                 got = g.grip(self.P.shut_counts if close else self.P.open_counts, "close the gripper" if close else "open the gripper")
                 return "" if not close else (f"holding something {got / 10.0:.0f} mm wide" if got >= self.P.held_min_counts else "closed on nothing")
 

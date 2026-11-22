@@ -461,6 +461,11 @@ def make_out(blob, cam, table, cat, good=0.80):
     if not tried:
         return None, f"no {blob.colour} block is in the catalogue"
     tried.sort(key=lambda t: -t[0])
+    # Seen from the side, a plank on its edge and the same plank lying flat have outlines that are nearly alike. When
+    # two ways of lying fit about equally well, the lower one is taken: a block lies flat far more often than it
+    # stands on an edge, and a block wrongly thought to stand tall would be gripped at the wrong width and height.
+    near = [t for t in tried if t[0] >= tried[0][0] - 0.02 and t[1].name == tried[0][1].name and t[1].shape == "box"] or tried[:1]
+    tried.insert(0, tried.pop(tried.index(min(near, key=lambda t: (t[2].height, -t[0])))))
     s, kind, rest, x = tried[0]
     if s < good:
         return None, f"it looks most like a {kind.name} ({rest.name}) but fits only {100 * s:.0f}%: is it touching another block, or missing from the catalogue?"

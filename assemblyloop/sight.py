@@ -89,7 +89,9 @@ class Sight:
     def catalogue(self):
         if not self.blocks_path.exists():
             raise Refused(f"there is no {self.blocks_path}: measure the blocks and write them down (see blocks.example.json)")
-        return Catalogue.load(self.blocks_path)
+        cat = Catalogue.load(self.blocks_path)
+        self.P.jaw_offset_mm = cat.jaw_offset_mm  # how these fingers differ from what the gripper says goes with the blocks' sizes
+        return cat
 
     def _setup_fits(self):
         """'' if the camera's setup belongs to the spots that are known now, otherwise why not."""
@@ -564,7 +566,7 @@ class Sight:
                 sp.at[src], sp.rot[src] = table.point(b.uv[0], b.uv[1], setup.w_grasp), spin(setup.rpy_ref, up, turn_src)
                 sp.at[dst], sp.rot[dst] = table.point(*uv(p.block.x, p.block.y), setup.w_grasp), spin(setup.rpy_ref, up, turn_dst)
                 legs.append(dict(src=src, dst=dst, su=p.hold, du=p.z + p.hold + (self.P.drop_mm if p.z > D.TOUCH_MM else 0.0), adds=True, width=b.rest.short,
-                                 release=int(round(10.0 * rep["blocks"][k]["release_mm"])), source=dict(name=b.name, kind=b.kind, rest=b.rest, uv=np.asarray(b.uv, float)),
+                                 release=int(round(10.0 * (rep["blocks"][k]["release_mm"] - self.P.jaw_offset_mm))), source=dict(name=b.name, kind=b.kind, rest=b.rest, uv=np.asarray(b.uv, float)),
                                  text=f"{b.name} to step {k + 1} of {len(parts)}"))
                 expect.append(dict(name=b.name, kind=p.kind, rest=p.rest, uv=tuple(uv(p.block.x, p.block.y)), angle=ang(p.block.angle), z=p.z))
                 a = np.radians(ang(p.block.angle))

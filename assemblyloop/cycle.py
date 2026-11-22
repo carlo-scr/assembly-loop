@@ -40,6 +40,7 @@ class Params:
     shut_counts: int = 0
     held_min_counts: int = 100  # the jaws stalled on something if they stop above this
     squeeze_mm: float = 2.5  # a block of known width is held this much narrower than it is (0: as hard as the jaws close)
+    jaw_offset_mm: float = 0.0  # the gap between the fingers is this much wider than the gripper says (from the catalogue of blocks)
     max_offset_mm: float = 15.0
     stall_mm: float = 2.5  # lowering and pressing end once the measured arm is this far behind the plan
     pull_stall_mm: float = 4.0  # pulling a brick off its studs is allowed a little more, then it counts as stuck
@@ -145,11 +146,12 @@ def execute(guard, steps, P=None, air=False, before=None, after=None):
                 want = s.get("expect_mm")
                 # jaws that closed as far as they go must have stopped at the block's width; jaws that were sent to just
                 # under its width (the gentle grip) must not have been stopped short of it by something wider
-                wrong = want and not air and ((s.get("must_hold") and abs(got / 10.0 - want) > P.grip_tol_mm) or (s.get("gentle") and got / 10.0 > want + 4.0))
+                gap = got / 10.0 + P.jaw_offset_mm  # what is really between the fingers
+                wrong = want and not air and ((s.get("must_hold") and abs(gap - want) > P.grip_tol_mm) or (s.get("gentle") and gap > want + 4.0))
                 if wrong:
                     guard.grip(P.open_counts, "open again: not what was meant")
                     guard.move_to(hover, P.slow, "lift clear: not what was meant")
-                    raise WrongGrip(f"the jaws closed to {got / 10.0:.0f} mm, but the block is {want:.0f} mm across: another block, or turned the wrong way")
+                    raise WrongGrip(f"the jaws closed to {gap:.0f} mm, but the block is {want:.0f} mm across: another block, or turned the wrong way")
             elif s["kind"] == "read":
                 out["reads"][s["name"]] = guard.read(s["name"])
         finally:

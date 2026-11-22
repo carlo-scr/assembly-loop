@@ -167,7 +167,7 @@ def plan_move(spots, src, dst, here, P, rehearse=False, src_up=0.0, dst_up=0.0, 
         first = gs + min(20.0, spots.lift) * up
         S += [dict(name=f"lower around the thing at {ns}", kind="move", to=gs, speed=P.slow, stall_mm=P.stall_mm),
               dict(name="close on it", kind="grip", counts=P.shut_counts, must_hold=True, expect_mm=grip_mm) if not grip_mm or P.squeeze_mm <= 0 else
-              dict(name="close on it, gently", kind="grip", counts=max(0, int(round((float(grip_mm) - P.squeeze_mm) * 10.0))), expect_mm=grip_mm, gentle=True),
+              dict(name="close on it, gently", kind="grip", counts=max(0, int(round((float(grip_mm) - P.squeeze_mm - P.jaw_offset_mm) * 10.0))), expect_mm=grip_mm, gentle=True),
               dict(name="read the grasp", kind="read"),
               dict(name="lift it, slowly at first", kind="move", to=first, speed=P.press, stall_mm=P.pull_stall_mm, let_go_if_blocked=True),
               dict(name="lift to the travel height", kind="move", to=hs, speed=P.lift)]

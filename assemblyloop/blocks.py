@@ -76,6 +76,7 @@ class Catalogue:
     kinds: list = field(default_factory=list)
     finger_mm: float = 40.0
     jaw_mm: float = 85.0
+    jaw_offset_mm: float = 0.0  # how much wider the gap between the fingers really is than the gripper says (fingers that are not UFACTORY's own)
 
     def check(self):
         if not self.kinds:
@@ -84,6 +85,8 @@ class Catalogue:
             raise Refused("two kinds of block have the same name")
         if not (10.0 <= self.finger_mm <= 120.0 and 20.0 <= self.jaw_mm <= 120.0):
             raise Refused("finger_mm is between 10 and 120, jaw_mm between 20 and 120")
+        if not -15.0 <= self.jaw_offset_mm <= 15.0:
+            raise Refused("jaw_offset_mm is between -15 and 15")
         for k in self.kinds:
             k.check()
         return self
@@ -95,14 +98,14 @@ class Catalogue:
         raise Refused(f"there is no kind of block called {name!r}")
 
     def to_dict(self):
-        return dict(finger_mm=self.finger_mm, jaw_mm=self.jaw_mm,
+        return dict(finger_mm=self.finger_mm, jaw_mm=self.jaw_mm, jaw_offset_mm=self.jaw_offset_mm,
                     kinds=[dict(name=k.name, shape=k.shape, size_mm=list(k.size), **({"colour": k.colour} if k.colour else {})) for k in self.kinds])
 
     @classmethod
     def from_dict(cls, d):
         try:
             kinds = [Kind(str(k["name"]), str(k["shape"]), tuple(float(v) for v in k["size_mm"]), k.get("colour")) for k in d.get("kinds", [])]
-            return cls(kinds, float(d.get("finger_mm", 40.0)), float(d.get("jaw_mm", 85.0))).check()
+            return cls(kinds, float(d.get("finger_mm", 40.0)), float(d.get("jaw_mm", 85.0)), float(d.get("jaw_offset_mm", 0.0))).check()
         except (KeyError, TypeError, ValueError) as e:
             raise Refused(f"blocks.json is not readable: {e!r}") from None
 
