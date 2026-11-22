@@ -203,7 +203,7 @@ build in the picture, and the camera takes one picture:
 - The same picture is looked at as a whole, and the next block is taken where it lies now and turned as it lies now
   (it may have been pushed), if it is within 30 mm of where it was seen before.
 - When the jaws close, they must close to the width of the block meant, within 10 mm. Another block, or the right one
-  taken the wrong way round, stops the job.
+  taken the wrong way round, stops the job. (Unticking "check every block" drops this check too.)
 
 Every such picture is kept in the session's folder under `assembly_logs/<session>/pictures/`, with a line in
 `moves.jsonl` that says what was checked and found. No picture is taken while the arm moves, and pictures never steer

@@ -601,7 +601,7 @@ class Session(Sight):
                 if leg.get("prepare"):  # a camera job: the block is taken where the newest picture shows it
                     leg["prepare"]()
                 here = g.where()
-                steps = plan_move(sp, at, dst, here, self.P, rehearse=job["rehearse"], src_up=leg["su"], dst_up=leg["du"], release_counts=leg.get("release"), grip_mm=leg.get("width"))
+                steps = plan_move(sp, at, dst, here, self.P, rehearse=job["rehearse"], src_up=leg["su"], dst_up=leg["du"], release_counts=leg.get("release"), grip_mm=leg.get("width") if job.get("watch") else None)  # unticking "check every block" also drops the width check
                 top = float(here @ sp.up) + 1.0  # the arm may start above the travel height (after a tower): it comes down first
                 g.lim = sp.limits(floor_w=min(float(here @ sp.up), sp.travel_w()) - 1.0, ceil_w=top, **self.limit_kw) if job["rehearse"] else sp.limits(ceil_w=top, **self.limit_kw)
                 with self.lock:
