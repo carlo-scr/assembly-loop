@@ -49,6 +49,12 @@ class V4L2:
 def grab(device, size=(3840, 2160), warm=8):
     """One picture (BGR) from a V4L2 camera. The first frames after opening are dark: they are thrown away."""
     cap = cv2.VideoCapture(os.path.realpath(str(device)), cv2.CAP_V4L2)
+    for _ in range(8):  # a camera that was let go of a moment ago (the page's live pictures) is not free at once
+        if cap.isOpened():
+            break
+        cap.release()
+        time.sleep(0.25)
+        cap = cv2.VideoCapture(os.path.realpath(str(device)), cv2.CAP_V4L2)
     try:
         if not cap.isOpened():
             raise Refused(f"the camera {device} does not open: is another program using it?")

@@ -78,6 +78,7 @@ class Owner(threading.Thread):
         super().__init__(daemon=True, name=f"feed:{spec['id']}")
         self.hub, self.id, self.label, self.device, self.arms, self.make = hub, str(spec["id"]), str(spec["label"]), spec.get("device"), tuple(spec.get("arms", ())), spec.get("make")
         self.cap, self.jpg, self.seq, self.at, self.size, self.note, self.lent, self._shot = None, b"", 0, 0.0, None, "", False, 0.0
+        self.busy = False  # the device is open, being opened or being closed: nobody else can have it yet (at the rig, closing takes a moment)
 
     def _let_go(self):
         cap, self.cap = self.cap, None
@@ -86,6 +87,7 @@ class Owner(threading.Thread):
                 cap.release()
             except Exception:  # noqa: BLE001  whatever a camera driver raises while closing
                 pass
+        self.busy = False
 
     def run(self):
         hub, wait = self.hub, 0.5
@@ -97,15 +99,22 @@ class Owner(threading.Thread):
                 time.sleep(0.03)
                 continue
             if self.cap is None:
+                self.busy = True
                 try:
                     self.cap = self.make() if self.make is not None else hub.open(self.device, hub.size)
                     self.note, wait = "", 0.5
                 except Exception as e:  # noqa: BLE001  not there, busy, no OpenCV: say so and try again later
+                    self.busy = False
                     self.note = str(e) or type(e).__name__
                     hub.nap(wait)
                     wait = min(wait * 2.0, 8.0)
                     continue
             try:
+                if time.monotonic() - self._shot < 1.0 / hub.fps and hasattr(self.cap, "grab"):
+                    # A picture the page will not get is taken off the camera's queue WITHOUT being unpacked: unpacking
+                    # every picture of four cameras used most of a processor in the program that also moves the arm.
+                    if self.cap.grab():
+                        continue
                 ok, im = self.cap.read()
             except Exception:  # noqa: BLE001
                 ok, im = False, None
@@ -188,7 +197,7 @@ class Feeds:
             o.lent = True
         try:
             end = time.monotonic() + 3.0
-            while any(o.cap is not None for o in mine) and time.monotonic() < end:
+            while any(o.busy or o.cap is not None for o in mine) and time.monotonic() < end:  # until it is really closed, not only being closed
                 time.sleep(0.01)
             yield
         finally:
