@@ -124,3 +124,27 @@ def test_fingers_whose_gap_is_wider_than_the_gripper_says_are_closed_further():
     close = lambda P: next(s for s in plan_move(sp, "A", "B", sp.above(sp.grasp("A")), P, grip_mm=31.0) if s["name"].startswith("close on it"))  # noqa: E731
     assert close(Params())["counts"] == 285  # 2.5 mm under 31 mm, as the gripper counts
     assert close(Params(jaw_offset_mm=4.0))["counts"] == 245  # the same gap between fingers that stand 4 mm wider apart than it says
+
+
+def test_a_block_whose_colour_spills_over_its_edges_is_still_made_out_with_the_spill_allowed():
+    """On the rig the camera saw 25.4 x 12.7 mm planks as about 31 x 17.5: their colour spills ~2.5 mm over each edge.
+    With the exact size in the catalogue the outline then covers too little of the patch, unless the spill is allowed."""
+    from assemblyloop.blocks import Catalogue, Kind
+    from assemblyloop.eyes import PAINT, Blob, Camera, Table, make_out, outline, solid
+
+    R = cv2.Rodrigues(np.array([np.pi, 0.0, 0.0]))[0]  # looking straight down from 600 mm
+    cam = Camera((1280, 960), 1400.0, (0.0, 0.0), cv2.Rodrigues(R)[0].ravel(), -R @ np.array([0.0, 0.0, 600.0]))
+    table = Table(np.eye(3), 0.0)
+    kind = Kind("blue plank", "box", (88.9, 25.4, 12.7), "blue")
+    wide = Kind("blue plank", "box", (88.9 + 5.0, 25.4 + 5.0, 12.7 + 2.5), "blue")  # what the camera sees: 2.5 mm more on each side
+    im = np.full((960, 1280, 3), 100, np.uint8)
+    hull = outline(cam, solid(wide.rests()[0], table, 0.0, 0.0, 30.0, "box"))
+    cv2.fillConvexPoly(im, np.round(hull).astype(np.int32), PAINT["blue"])
+    mask = np.all(im == np.array(PAINT["blue"], np.uint8), axis=2)
+    ys, xs = np.nonzero(mask)
+    blob = Blob("blue", mask[ys.min():ys.max() + 1, xs.min():xs.max() + 1], int(xs.min()), int(ys.min()), (float(xs.mean()), float(ys.mean())))
+    exact, allowed = Catalogue([kind]), Catalogue([kind], seen_wider_mm=2.5)
+    s0, why = make_out(blob, cam, table, exact)
+    s1, _ = make_out(blob, cam, table, allowed)
+    assert s0 is None and "fits only" in why  # the exact outline alone covers too little of what is seen
+    assert s1 is not None and s1.score > 0.9 and abs(s1.uv[0]) < 1.0 and abs(s1.uv[1]) < 1.0 and abs((s1.angle - 30.0 + 90) % 180 - 90) < 2.0

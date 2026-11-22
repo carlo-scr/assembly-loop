@@ -12,6 +12,7 @@
   <div class="mode">Designer</div>
   <div class="namebox"><input type="text" id="dname" placeholder="name this design" maxlength="40" spellcheck="false"><span id="dirty" title="changed since it was saved" hidden>●</span></div>
   <div class="tools">
+    <button id="frommat" title="Start from the blocks the camera saw at the last Look: the tower it would build, widest at the bottom" disabled>From the mat</button>
     <button id="newbtn" title="Start an empty design">New</button>
     <div class="dropwrap"><button id="openbtn" title="Open a saved design or an example">Open ▾</button><div id="openlist" class="menu" hidden></div></div>
     <button id="savebtn" class="go" title="Save it, so that the dashboard can build it">Save</button>
@@ -93,6 +94,7 @@
   <!-- ---------------------------------------------------------------- right: the blocks -->
   <section class="card dright" id="palette">
     <div class="head"><h2>Blocks</h2><span class="grow"></span><span id="catsrc" class="muted small"></span></div>
+    <div id="matline" class="muted small"></div>
     <div id="kinds"></div>
     <div class="muted small foot">Drag a block onto the mat. It lands on whatever is under it.</div>
   </section>

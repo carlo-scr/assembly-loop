@@ -7,7 +7,10 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 let viewer = null, last = null, sig = {}, lastThing, lastN, tab = "blocks";
 let down = false, big = false, wasActive = false, stale = false;  // the page's own switch; a task asked for; a task was running; this tab was replaced
 
-function say(text) { $("msg").textContent = text || ""; $("msg").hidden = !text; }
+function say(text, good) {  // a refusal (red, until clicked) or, with `good`, a note that goes by itself
+  const m = $("msg"); m.textContent = text || ""; m.hidden = !text; m.style.borderColor = m.style.color = good ? "var(--ok)" : "";
+  clearTimeout(say.t); if (text && good) say.t = setTimeout(() => { m.hidden = true; }, 4000);
+}
 $("msg").onclick = () => say("");
 // A task that is asked for puts the page's own switch to off first (nothing starts before the switch is clicked for it).
 const BIG = ["/api/level", "/api/find_table", "/api/move", "/api/tower", "/api/show_table", "/api/build_seen", "/api/build_design", "/api/put_held", "/api/calibrate"];
@@ -109,7 +112,7 @@ function render(s) {
 
   // ---- moving blocks
   const names = c.done ? c.spots.map(x => x.name) : [];
-  once("names", names, () => { options($("thing"), names, [["", "— say where —"]]); options($("dst"), names, [["", "a spot picked at random"]]); options($("tw_on"), names, [["", "— which spot —"]]); options($("e_on"), names, [["*", "a block, where it lies"]]); options($("d_on"), names, [["*", "its first block, where one lies"]]); options($("ph_on"), names, [["", "— which spot —"]]); lastThing = undefined; });
+  once("names", names, () => { options($("thing"), names, [["", "— say where —"]]); options($("dst"), names, [["", "a spot picked at random"]]); options($("tw_on"), names, [["", "— which spot —"]]); options($("e_on"), names, [["*", "a block, where it lies"]]); options($("ph_on"), names, [["", "— which spot —"]]); lastThing = undefined; });
   const st = s.stack, nNow = st ? st.n : undefined; if (nNow !== lastN) { lastN = nNow; if (st) { $("tw_n").value = st.n == null ? "" : st.n; $("tw_on").value = st.on; } }
   const on = $("tw_on").value, feeds = names.filter(n => n !== on).slice(0, 6); ["tw_build", "tw_down", "tw_loop"].forEach(id => { $(id).disabled = ph !== "ARMED"; });
   const note = !c.done ? "" : (!on ? "Choose the spot the tower stands on. One block stands on every other spot." : `One block stands on each of ${feeds.join(", ")}. They go onto ${on} in that order: the first at the taught height, each next one a block height higher, let go ${s.drop_mm} mm above the one below.`) + (st && st.n == null ? " The last run did not end as planned: say how many blocks stand on the tower now." : "");
@@ -125,11 +128,20 @@ function render(s) {
   $("showcambtn").disabled = ph !== "ARMED";
   once("bars", e.bars || [], () => options($("e_kind"), e.bars || [], []));
   $("lookbtn").disabled = !e.shown || busy; $("e_show").disabled = ph !== "ARMED" || !(e.bars || []).length;
-  $("e_build").disabled = !(ph === "ARMED" && e.ready && g && !g.stale && g.order.length);
-  $("d_build").disabled = !(ph === "ARMED" && e.ready && g && !g.stale && $("d_name").value && $("d_on").value);
-  $("d_build").title = !e.ready ? "Show the camera the table first" : (!g || g.stale ? "Press Look first" : "Every block of the design is taken from the last look, and put down where the design says");
+  // what to build: a tower of everything the camera sees, or a design (made in the designer, or an example)
+  const what = $("d_name").value, isTower = what === TOWER, dz = DESIGNS.find(d => d.name === what);
+  $("e_build").disabled = !(ph === "ARMED" && e.ready && g && !g.stale && (isTower ? g.order.length : !!dz) && $("e_on").value);
+  $("e_build").title = !e.ready ? "Show the camera the table first" : (!g || g.stale ? "Press Look first" : (isTower ? "Every block the camera sees goes onto the tower, widest first" : "Every block of the design is taken from the last look, and put down where the design says"));
+  $("d_edit").href = isTower || !dz ? "/build?from=mat" : "/build?open=" + encodeURIComponent(what);
+  $("d_edit").textContent = isTower || !dz ? "Change it in the designer ↗" : "Open it in the designer ↗";
   once("seen", g ? [g.t, g.stale] : null, () => { $("e_seen").replaceChildren(...(g ? g.seen.map(b => chip("✓", "y", b.name, `${b.lies}, fits ${b.fit}%`)).concat(g.unknown.map(w => chip("?", "n", "not made out", w))) : [])); });
-  const plan = !g ? "" : ((g.stale ? "This picture is from before the last move: press Look again. " : "") + (g.order.length ? `Tower, bottom first: ${g.order.join(", ")} (${g.height_mm} mm high).` : "Nothing in this picture can go onto a tower.") + (g.left_out.length ? " Left out: " + g.left_out.join("; ") + "." : ""));
+  let plan = !g ? "Press Look: then the camera's blocks can be built." : (g.stale ? "This picture is from before the last move: press Look again. " : "");
+  if (g && isTower) plan += (g.order.length ? `Bottom first: ${g.order.join(", ")} (${g.height_mm} mm high).` : "Nothing in this picture can go onto a tower.") + (g.left_out.length ? " Left out: " + g.left_out.join("; ") + "." : "");
+  else if (g && dz) {  // does the mat hold what the design needs?
+    const have = {}; g.seen.forEach(b => { const k = b.kind + "|" + b.lies; have[k] = (have[k] || 0) + 1; });
+    const short = (dz.uses || []).filter(u => (have[u.kind + "|" + u.rest] || 0) < u.n).map(u => `${u.n - (have[u.kind + "|" + u.rest] || 0)} × ${u.kind} (${u.rest})`);
+    plan += `${dz.n} blocks. ` + (short.length ? "Not on the mat: " + short.join(", ") + "." : "Everything it needs is on the mat.");
+  }
   $("e_plan").textContent = plan; $("e_plan").title = plan;
   lookTile(g);
 
@@ -189,11 +201,22 @@ $("nextbtn").onclick = () => post("/api/next"); $("phbtn").onclick = () => post(
 const tower = what => post("/api/tower", {on: $("tw_on").value, block_mm: +$("tw_h").value, n_now: $("tw_n").value === "" ? null : +$("tw_n").value, what: what, rounds: +$("tw_r").value, rehearse: $("rehearse").checked, step: $("step").checked});
 $("tw_build").onclick = () => tower("build"); $("tw_down").onclick = () => tower("down"); $("tw_loop").onclick = () => tower("loop");
 $("lookbtn").onclick = () => post("/api/look"); $("e_show").onclick = () => { closePops(); post("/api/show_table", {kind: $("e_kind").value, n: +$("e_n").value, step: $("step").checked}); };
-$("e_build").onclick = () => post("/api/build_seen", {on: $("e_on").value, rehearse: $("rehearse").checked, step: $("step").checked, check: $("camcheck").checked});
-$("d_build").onclick = () => post("/api/build_design", {name: $("d_name").value, on: $("d_on").value, rehearse: $("rehearse").checked, step: $("step").checked, check: $("camcheck").checked});
-async function designs() {  // the saved designs and the examples, for the Camera tab
-  try { const j = await (await fetch("/api/designs")).json(); once("designs", j.designs, () => options($("d_name"), (j.designs || []).map(d => d.name), [["", "— which design —"]])); }
-  catch (e) { /* the list stays as it was */ }
+$("e_build").onclick = () => {
+  const how = {on: $("e_on").value, rehearse: $("rehearse").checked, step: $("step").checked, check: $("camcheck").checked};
+  return $("d_name").value === TOWER ? post("/api/build_seen", how) : post("/api/build_design", {name: $("d_name").value, ...how});
+};
+const TOWER = "\u0000tower";  // not a name a design can have
+let DESIGNS = [], newest = null;
+async function designs() {  // the saved designs and the examples; one just saved in the designer is chosen by itself
+  try {
+    const j = await (await fetch("/api/designs")).json(); DESIGNS = j.designs || [];
+    const mine = DESIGNS.filter(d => !d.example), ex = DESIGNS.filter(d => d.example), top = mine.reduce((a, d) => (!a || d.mtime > a.mtime ? d : a), null);
+    once("designs", DESIGNS.map(d => [d.name, d.mtime]), () => {
+      options($("d_name"), [], [[TOWER, "a tower of everything it sees"], ...mine.map(d => [d.name, d.name]), ...ex.map(d => [d.name, d.name + " (example)"])]);
+      if (top && newest !== null && top.mtime > newest) { $("d_name").value = top.name; say("“" + top.name + "” from the designer is chosen under Build.", true); }
+      if (top) newest = Math.max(newest || 0, top.mtime); else if (newest === null) newest = 0;
+    });
+  } catch (e) { /* the list stays as it was */ }
 }
 designs(); setInterval(() => { if (!document.hidden && tab === "cam") designs(); }, 5000);
 const setTab = t => { tab = t; if (t === "cam") designs(); $("tab_blocks").classList.toggle("on", t === "blocks"); $("tab_cam").classList.toggle("on", t === "cam"); show("pane_blocks", t === "blocks"); show("pane_cam", t === "cam"); };

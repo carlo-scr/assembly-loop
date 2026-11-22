@@ -20,6 +20,7 @@ let cat = null, KIND = new Map(), GROUPS = [];
 let design = {name: "", note: "", blocks: []}, sel = null, report = null, upto = null, savedAs = null, dirty = false;
 const hist = [], fut = [];
 let checkSeq = 0, checkTimer = null, busy = false;
+let mat = null;  // what the camera found on the mat at the last Look: {t, age_s, stale, blocks: [{kind, rest, n}], tower, why}
 
 function say(text, good) { const m = $("msg"); m.textContent = text || ""; m.hidden = !text; m.style.borderColor = good ? "var(--ok)" : ""; m.style.color = good ? "var(--ok)" : ""; clearTimeout(say.t); if (text) say.t = setTimeout(() => { m.hidden = true; }, good ? 3500 : 9000); }
 $("msg").onclick = () => { $("msg").hidden = true; };
@@ -411,8 +412,11 @@ function renderUI() {
   else if (report.stands) note = `Every step stands. Weakest: step ${report.weakest + 1}, which holds ${report.steps[report.weakest].tilt_deg}° of tilt.`;
   if (report && report.problems.length) note += " " + report.problems.join(" ");
   $("checknote").textContent = note;
-  const needs = report ? report.needs : [];
-  $("needs").replaceChildren(...(needs.length ? [el("b", "", "On the mat ")] : []), ...needs.map(n => { const c = el("span", "need"), i = el("i"); i.style.background = PAINT[(KIND.get(n.kind) || {}).colour] || "#999"; c.append(i, `${n.n} × ${n.kind}`, el("small", "", " " + n.rest)); return c; }));
+  const needs = report ? report.needs : [], known = !!(mat && mat.t);
+  $("needs").replaceChildren(...(needs.length ? [el("b", "", known ? "Needs (✓ on the mat)" : "On the mat ")] : []), ...needs.map(n => {
+    const c = el("span", "need"), i = el("i"), have = onMat(n.kind, n.rest), short = known && have < n.n;
+    i.style.background = PAINT[(KIND.get(n.kind) || {}).colour] || "#999"; c.append(i, `${n.n} × ${n.kind}`, el("small", "", " " + n.rest + (!known ? "" : short ? ` · ${have} on the mat` : " ✓")));
+    c.classList.toggle("short", short); return c; }));
   $("needs").title = needs.map(n => `${n.n} × ${n.kind} (${n.rest})`).join(", ");
   // the selected block
   const b = byId(sel); show("sel_none", !b); show("sel_on", !!b);
@@ -457,7 +461,7 @@ async function save() {
   const name = ($("dname").value || "").trim();
   if (!name) { say("Give the design a name first (top left)."); $("dname").focus(); return; }
   design.name = name;
-  try { const r = await api("/api/design/save", {design}); savedAs = r.name; dirty = false; renderUI(); say(`Saved as "${r.name}". On the dashboard: Camera → A design.`, true); afterSaveStore(); }
+  try { const r = await api("/api/design/save", {design}); savedAs = r.name; dirty = false; renderUI(); say(`Saved as "${r.name}". On the dashboard (Camera tab) it is chosen under Build.`, true); afterSaveStore(); }
   catch (e) { say(e.message); }
 }
 function afterSaveStore() { try { localStorage.setItem(KEY, JSON.stringify({design, savedAs, dirty})); } catch (e) { /* nothing kept */ } }
@@ -529,7 +533,7 @@ function palette() {
     const box = el("div", "kind"), h = el("h3", "", word(k0)); h.append(el("small", "", dims + " mm")); box.append(h);
     const row = el("div", "row4");
     ks.sort((a, b) => ORDER.indexOf(a.colour) - ORDER.indexOf(b.colour)).forEach(k => {
-      const t = el("div", "thumb"); t.title = `${k.name}: drag it onto the mat`; t.append(Object.assign(el("img"), {src: k.img, alt: k.name, draggable: false}));
+      const t = el("div", "thumb"); t.title = `${k.name}: drag it onto the mat`; t.dataset.kind = k.name; t.append(Object.assign(el("img"), {src: k.img, alt: k.name, draggable: false}), el("span", "badge"));
       t.addEventListener("pointerdown", e => { if (e.button === 0) beginCarry(e, k); });
       row.append(t);
     });
@@ -538,6 +542,33 @@ function palette() {
   $("catsrc").textContent = cat.example ? "example sizes" : "from " + cat.source;
   $("catsrc").title = cat.example ? "blocks.json is not there: the sizes are those of blocks.example.json" : "the rig's own blocks.json";
 }
+
+// ---------------------------------------------------------------------------------------------------- the blocks on the mat
+// The dashboard's last Look: how many of each block lie on the mat, and the tower the camera would build from them.
+// The designer can start from that tower ("From the mat"), shows the counts on the palette, and marks what a design
+// needs that is not on the mat. Nothing here moves the arm: building is done on the dashboard.
+const onMat = (kind, rest) => !(mat && mat.t) ? 0 : mat.blocks.filter(b => b.kind === kind && (rest == null || b.rest === rest)).reduce((a, b) => a + b.n, 0);
+async function pollMat() {
+  let m = null;
+  try { m = await api("/api/design/mat"); } catch (e) { m = null; }
+  const changed = JSON.stringify(m) !== JSON.stringify(mat);
+  mat = m;
+  if (!changed) return;
+  const known = !!(mat && mat.t);
+  document.querySelectorAll(".thumb").forEach(t => { const n = onMat(t.dataset.kind); t.querySelector(".badge").textContent = known && n ? String(n) : ""; t.classList.toggle("absent", known && !n); });
+  const total = known ? mat.blocks.reduce((a, b) => a + b.n, 0) : 0;
+  $("matline").replaceChildren(...(known ? [el("b", "", `${total} on the mat`), ` · looked ${mat.age_s < 90 ? mat.age_s + " s" : Math.round(mat.age_s / 60) + " min"} ago` + (mat.stale ? ", before the last move" : "")] : [mat ? mat.why : ""]));
+  $("frommat").disabled = !(mat && mat.tower);
+  renderUI();
+}
+function fromMat() {
+  if (!(mat && mat.tower)) return;
+  if (design.blocks.length && dirty && !confirm("Start from the blocks on the mat? The design shown has changes that are not saved (Undo brings it back).")) return;
+  change(() => { design = JSON.parse(JSON.stringify(mat.tower)); }, "The tower the camera would build from the mat: change it as you like, then Save.");
+  sel = null; savedAs = null; dirty = true; renderUI(); view("iso");
+}
+$("frommat").onclick = fromMat;
+setInterval(() => { if (!document.hidden) pollMat(); }, 3000);
 
 // ---------------------------------------------------------------------------------------------------- start
 (async () => {
@@ -551,7 +582,9 @@ function palette() {
     const kept = JSON.parse(localStorage.getItem(KEY) || "null");
     if (kept && kept.design && Array.isArray(kept.design.blocks) && kept.design.blocks.every(b => KIND.has(b.kind))) { design = kept.design; savedAs = kept.savedAs; dirty = !!kept.dirty; }
   } catch (e) { /* nothing kept */ }
-  const want = new URLSearchParams(location.search).get("open");
+  await pollMat();
+  const q = new URLSearchParams(location.search), want = q.get("open");
   if (want) await openDesign(want);
+  else if (q.get("from") === "mat") { if (mat && mat.tower) fromMat(); else say(mat && mat.why ? mat.why : "The camera has seen nothing on the mat yet: press Look on the dashboard."); }
   settle(); draw(); renderUI(); askCheck();
 })();

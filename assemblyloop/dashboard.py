@@ -413,6 +413,8 @@ def make_server(session, port=8777):
                     return self._send(dict(designs=session.design_list()))
                 if url.path == "/api/design":
                     return self._send(dict(design=session.design_get(parse_qs(url.query).get("name", [""])[0])))
+                if url.path == "/api/design/mat":
+                    return self._send(session.design_mat())
                 if url.path == "/api/design/catalogue":
                     return self._send(session.design_catalogue())
             except (Refused, ValueError, KeyError, TypeError) as e:

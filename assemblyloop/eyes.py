@@ -430,11 +430,24 @@ def outline(cam, pts):
     return cv2.convexHull(cam.project(pts).astype(np.float32)).reshape(-1, 2)
 
 
-def _cover(cam, table, rest, shape, x, target, origin):
+def _grow(mask, px):
+    """A drawn outline made `px` pixels wider all round: what a block looks like when its colour spills over its edges."""
+    k = int(round(px))
+    if k < 1:
+        return mask.astype(bool)
+    return cv2.dilate(mask.astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * k + 1, 2 * k + 1))).astype(bool)
+
+
+def _px_per_mm(cam, table, at):
+    """How many pixels a millimetre on the table is, near the point `at`."""
+    return float(np.linalg.norm(cam.project([at])[0] - cam.project([at + 10.0 * table.axes[:, 0]])[0])) / 10.0
+
+
+def _cover(cam, table, rest, shape, x, target, origin, grow_px=0.0):
     hull = outline(cam, solid(rest, table, x[0], x[1], x[2], shape)) - origin
     canvas = np.zeros(target.shape, np.uint8)
     cv2.fillConvexPoly(canvas, np.round(hull * 16).astype(np.int32), 1, shift=4)
-    drawn = canvas.astype(bool)
+    drawn = _grow(canvas, grow_px)
     union = int((drawn | target).sum())
     return 0.0 if union == 0 else float((drawn & target).sum()) / union
 
@@ -469,13 +482,14 @@ def make_out(blob, cam, table, cat, good=0.80):
     target = np.zeros((y1 - y0, x1 - x0), bool)
     target[blob.y0 - y0:blob.y0 - y0 + bh, blob.x0 - x0:blob.x0 - x0 + bw] = blob.mask
     origin, up = np.array([x0, y0], float), table.axes[:, 2]
+    grow = getattr(cat, "seen_wider_mm", 0.0) * _px_per_mm(cam, table, cam.on_plane([blob.centre], up, table.w0)[0])
     tried = []
     for kind in cat.kinds:
         if kind.colour is not None and kind.colour != blob.colour:
             continue
         for rest in kind.rests():
             mid = table.coords(cam.on_plane([blob.centre], up, table.w0 + rest.height / 2.0)[0])
-            score = lambda x, rest=rest, kind=kind: _cover(cam, table, rest, kind.shape, x, target, origin)  # noqa: E731
+            score = lambda x, rest=rest, kind=kind: _cover(cam, table, rest, kind.shape, x, target, origin, grow)  # noqa: E731
             starts = [np.array([mid[0], mid[1], 0.0])] if rest.round else [np.array([mid[0], mid[1], a]) for a in np.arange(0.0, 180.0, 15.0)]
             starts = sorted(starts, key=score, reverse=True)[:2]
             for x in starts:
@@ -506,7 +520,7 @@ def colour_mask(bgr, colour, s_min=115, v_min=70):
     return m & (hsv[..., 1] >= s_min) & (hsv[..., 2] >= v_min)
 
 
-def find_placed(bgr, cam, table, placed, k, window_mm=30.0):
+def find_placed(bgr, cam, table, placed, k, window_mm=30.0, wider_mm=0.0):
     """Where block k of `placed` is in this picture, looked for only near where it should be. `placed`: every block
     that should stand now, as dicts (kind, rest, uv, angle, z: its bottom above the table [mm]). Returns dict(fit: how
     well its outline covers its colour, 0 to 1; uv and angle where it fits best; off_mm and turn_deg from where it
@@ -538,7 +552,7 @@ def find_placed(bgr, cam, table, placed, k, window_mm=30.0):
     def fill(h):
         m = np.zeros((y1 - y0, x1 - x0), np.uint8)
         cv2.fillConvexPoly(m, np.round((h - origin) * 16).astype(np.int32), 1, shift=4)
-        return m.astype(bool)
+        return _grow(m, wider_mm * px_mm)  # the outline as the camera sees it, colour spilling over the edges
 
     hide, same = np.zeros((y1 - y0, x1 - x0), bool), np.zeros((y1 - y0, x1 - x0), bool)
     for j, p in enumerate(placed):

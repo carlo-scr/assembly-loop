@@ -155,7 +155,7 @@ class Sight:
         if s is not None:
             levels, left = plan_tower(s["seen"], cat, max_mm=self._tower_max()) if s["seen"] else ([], [])
             out["sight"] = dict(t=s["t"], age_s=round(time.time() - s["t"]), stale=s["stale"], unknown=s["unknown"],
-                                seen=[dict(name=b.name, lies=b.rest.name, mm=[round(b.uv[0]), round(b.uv[1])], fit=round(100 * b.score)) for b in s["seen"]],
+                                seen=[dict(name=b.name, kind=b.kind.name, lies=b.rest.name, mm=[round(b.uv[0]), round(b.uv[1])], fit=round(100 * b.score)) for b in s["seen"]],
                                 order=[lv["block"].name for lv in levels], height_mm=levels[-1]["top_mm"] if levels else 0.0, left_out=[f"{b.name}: {why}" for b, why in left])
         return out
 
@@ -398,7 +398,7 @@ class Sight:
             im = self._grab()
             rows, bad = [], []
             for j, p in enumerate(placed):
-                r = eyes.find_placed(im, setup.camera, setup.table, placed, j)
+                r = eyes.find_placed(im, setup.camera, setup.table, placed, j, wider_mm=self.catalogue().seen_wider_mm)
                 if r is None:
                     continue
                 rows.append(dict(step=j + 1, name=p["name"], fit=round(r["fit"], 2), off_mm=round(r["off_mm"], 1), turn_deg=round(r["turn_deg"], 1), visible=round(r["visible"], 2)))
@@ -507,6 +507,29 @@ class Sight:
                       rests=[dict(name=r.name, height=r.height, long=r.long, short=r.short, round=r.round, rolls=r.rolls) for r in k.rests()]) for k in cat.kinds]
         return dict(kinds=kinds, finger_mm=cat.finger_mm, jaw_mm=cat.jaw_mm, source=path.name, example=path.name != self.blocks_path.name, gripper=D.GRIPPER,
                     reach_mm=D.REACH_MM, height_mm=min(D.HEIGHT_MM, self._tower_max()), shaky_deg=D.SHAKY_DEG, max_tilt_deg=D.MAX_TILT_DEG)
+
+    def design_mat(self):
+        """What the last look found on the mat, for the designer: how many of each kind lie each way, and the tower
+        the camera would build from them (widest first, as "Build" with "a tower of everything" does) as a design to
+        start from. Its first block is the one that stays where it lies when built "on a block, where it lies"."""
+        from . import design as D
+
+        s = self.sight
+        if s is None:
+            return dict(t=None, blocks=[], tower=None, why="nothing has been looked at yet: press Look on the dashboard")
+        try:
+            cat = self.catalogue()
+        except Refused as e:
+            return dict(t=None, blocks=[], tower=None, why=str(e))
+        count = {}
+        for b in s["seen"]:
+            count[(b.kind.name, b.rest.name)] = count.get((b.kind.name, b.rest.name), 0) + 1
+        levels, left = plan_tower(s["seen"], cat, max_mm=self._tower_max()) if s["seen"] else ([], [])
+        tower = D.Design("Tower from the mat", [D.Block(lv["block"].kind.name, lv["block"].rest.name, 0.0, 0.0, 0.0, round(lv["base_mm"], 2), f"b{k + 1}") for k, lv in enumerate(levels)],
+                         "Every block the camera saw, widest at the bottom.")
+        return dict(t=s["t"], age_s=round(time.time() - s["t"]), stale=bool(s["stale"]), why="",
+                    blocks=[dict(kind=k, rest=r, n=n) for (k, r), n in sorted(count.items())], tower=tower.to_dict() if levels else None,
+                    left_out=[f"{b.name}: {why}" for b, why in left])
 
     def design_list(self):
         from . import design as D

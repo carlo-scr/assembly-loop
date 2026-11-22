@@ -583,7 +583,8 @@ def listing(folder):
                 d = Design.from_dict(json.loads(f.read_text()))
             except (OSError, ValueError, Refused):
                 continue
-            out[d.name.lower()] = dict(name=d.name, n=len(d.blocks), example=example, saved=time.strftime("%d %b %H:%M", time.localtime(f.stat().st_mtime)))
+            uses = [dict(kind=k, rest=r, n=sum(1 for b in d.blocks if (b.kind, b.rest) == (k, r))) for k, r in sorted({(b.kind, b.rest) for b in d.blocks})]
+            out[d.name.lower()] = dict(name=d.name, n=len(d.blocks), example=example, saved=time.strftime("%d %b %H:%M", time.localtime(f.stat().st_mtime)), mtime=f.stat().st_mtime, uses=uses)
     return sorted(out.values(), key=lambda d: (d["example"], d["name"].lower()))
 
 

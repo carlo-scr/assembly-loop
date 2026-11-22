@@ -83,7 +83,7 @@ def test_what_the_arm_cannot_do_is_named():
     # two planks side by side along their long faces: the fingers of the second one land in the first
     assert "fingers would hit step 1" in problems(make(("red plank", "flat", 0, 0, 0, 0), ("blue plank", "flat", 0, 30, 0, 0)), 1)
     assert not problems(make(("red plank", "flat", 0, 0, 0, 0), ("blue plank", "flat", 0, 55, 0, 0)), 1)  # far enough apart
-    assert not problems(make(("red plank", "flat", 0, 0, 0, 0), ("blue plank", "flat", 62, 0, 0, 0)), 1)  # end to end: the fingers are on the long faces
+    assert not problems(make(("red plank", "flat", 0, 0, 0, 0), ("blue plank", "flat", 95, 0, 0, 0)), 1)  # end to end: the fingers are on the long faces
     # the body of the gripper over a short block next to a tall one
     assert "gripper would hit" in problems(make(*[("red cube", "flat", 0, 0, 0, 25.4 * k) for k in range(5)], ("blue cube", "flat", 0, 40, 0, 0)), 5)
 
@@ -122,7 +122,7 @@ def test_designs_are_saved_listed_and_loaded_and_names_cannot_reach_outside(tmp_
     d = make(("red cube", "flat", 0, 0, 0, 0), name="My tower 1")
     f = D.save(tmp_path, d)
     assert f == tmp_path / "my_tower_1.json" and D.load(tmp_path, "My tower 1").to_dict() == d.to_dict()
-    assert {"name": "My tower 1", "n": 1, "example": False} == {k: v for k, v in D.listing(tmp_path)[0].items() if k != "saved"}
+    assert {"name": "My tower 1", "n": 1, "example": False, "uses": [dict(kind="red cube", rest="flat", n=1)]} == {k: v for k, v in D.listing(tmp_path)[0].items() if k not in ("saved", "mtime")}
     for bad in ("../x", "a/b", "", " ", ".hidden", "x" * 41, "..", "con\0"):
         with pytest.raises(D.Refused):
             D.check_name(bad)
@@ -166,7 +166,7 @@ def test_the_designer_page_and_its_calls(served):
     assert srv.token in page and "/web/build.js" in page and urllib.request.urlopen(url + "/web/build.js").status == 200
     assert call("/web/build.html")[0] == 404  # the page only with its token
     code, cat = call("/api/design/catalogue")
-    assert code == 200 and cat["example"] and len(cat["kinds"]) == 16 and {k["colour"] for k in cat["kinds"]} == {"green", "red", "blue", "yellow"}
+    assert code == 200 and cat["example"] and len(cat["kinds"]) == 20 and {k["colour"] for k in cat["kinds"]} == {"green", "red", "blue", "yellow"}
     assert cat["gripper"] == D.GRIPPER and cat["height_mm"] <= D.HEIGHT_MM
     d = make(("red cube", "flat", 0, 0, 0, 0), ("blue cube", "flat", 0, 0, 0, 25.4), name="Two").to_dict()
     code, r = call("/api/design/check", dict(design=d))

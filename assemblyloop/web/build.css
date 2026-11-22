@@ -65,6 +65,10 @@ button.danger{color:var(--no)}
 .kind .row4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px}
 .thumb{aspect-ratio:4/3;border-radius:9px;background:var(--bg);border:1px solid var(--line);cursor:grab;display:grid;place-items:center;overflow:hidden;touch-action:none;user-select:none}
 .thumb:hover{border-color:var(--accent)}.thumb img{width:100%;height:100%;object-fit:contain;pointer-events:none}
+.thumb{position:relative}.thumb .badge{position:absolute;top:3px;right:3px;min-width:17px;height:17px;padding:0 4px;border-radius:999px;background:var(--ok);color:#04130b;font-size:11px;font-weight:700;display:grid;place-items:center}
+.thumb .badge:empty{display:none}.thumb.absent{opacity:.4}
+#matline{margin-top:4px}#matline b{color:var(--ink);font-weight:600}
+.needs .need.short{color:var(--no)}.needs .need.short small{color:var(--no)}
 .foot{margin-top:8px}
 .carry{position:fixed;z-index:40;pointer-events:none;transform:translate(-50%,-50%);width:64px;height:48px;border-radius:9px;border:1px solid var(--accent);background:var(--card);box-shadow:0 8px 24px rgba(0,0,0,.4);opacity:.9}
 .carry img{width:100%;height:100%;object-fit:contain}

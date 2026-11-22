@@ -107,10 +107,19 @@ After every change the program checks every step of the build:
   leaves room. "Order for the robot" finds an order in which every step stands, if there is one.
 - **Limits:** 150 mm from the spot each way, and about 220 mm high.
 
-Saved designs go to `designs/` (not tracked by git). Four examples come with the program. To build one: on the
-dashboard, Camera tab, press Look, then under "A design" choose it and the spot, and press "Build the design". Every
-block is taken from the last look (the same kind, lying the same way), and let go opening only 10 mm past each side.
-Nothing is built unless the check passes. Lay the blocks out on the mat at least 30 mm from where the design goes.
+Saved designs go to `designs/` (not tracked by git). Four examples come with the program.
+
+**Building from what the camera sees** (dashboard, Camera tab): press Look, then under "Build from what it sees"
+choose **What** ("a tower of everything it sees", widest at the bottom, or any design) and **On** ("a block, where
+it lies", or a taught spot), and press **Build**. The line below says whether the mat holds everything the design
+needs. Every block is taken from the last look (the same kind, lying the same way), and a design's block is let go
+opening only 10 mm past each side. Nothing is built unless the check passes. Lay the blocks out on the mat at least
+30 mm from where the design goes.
+
+**The designer knows the mat.** After a Look, the designer's palette shows how many of each block lie on the mat,
+"From the mat" (or "Change it in the designer" on the dashboard) starts from the tower the camera would build, and
+what a design needs that is not on the mat is marked in red. Change it, Save, and the dashboard chooses it under
+Build by itself.
 
 The gripper's sizes come from UFACTORY's model of it, not from measuring the rig.
 
@@ -174,9 +183,13 @@ real arm or with the real camera.**
 
 It needs OpenCV: `pip install -e ".[real,eyes]"` (with uv: `uv pip install -e ".[real,eyes]"`).
 
-1. **Measure the blocks.** Copy `blocks.example.json` to `blocks.json` and enter every kind of block with its
-   colour and its sizes in millimetres (a box: three edges; a cylinder: diameter, length). The sizes in the example
-   are guesses. `finger_mm` is how deep a block can sit between the fingers, `jaw_mm` how far the jaws open.
+1. **The blocks.** Copy `blocks.example.json` to `blocks.json`. It has the lab's blocks at their exact sizes (cube
+   25.4 mm; bar 57.2, long bar 88.9 and plank 88.9 × 12.7 mm, all 25.4 wide; cylinder 25.4 × 60.3 mm) in four
+   colours; remove what you do not have. `finger_mm` is how deep a block can sit between the fingers, `jaw_mm` how
+   far the jaws open, `jaw_offset_mm` how much wider the fingers' gap is than the gripper says (0 with these fingers:
+   the 4 mm used for a while made up for a plank measured 5.6 mm too wide), `seen_wider_mm` how far a block's colour
+   spills over its edges in the camera's pictures (2.5 on the rig: planks looked 31 × 17.5 mm). The triangles, the
+   semicircle and the arch of the set are not known to the program yet.
 2. **Find the table.** With the gripper pointing straight down over the middle of the area, close it on a bar held
    level between the jaws (jaws across its short side), press "Find the table" and hold the grip. The gripper comes
    straight down at 15 mm/s until the bar meets the mat, lets go, and makes the spots itself: T where the bar lies
