@@ -117,7 +117,7 @@ def cmd_look(a):
             print(f"  {s.name:22s} {s.rest.name:12s} at {s.uv[0]:7.1f}, {s.uv[1]:7.1f} mm, long side at {s.angle:5.1f} deg, outline fits {100 * s.score:.0f}%")
         for _, why in unknown:
             print(f"  not made out: {why}")
-        out = eyes.draw(im, blobs, seen, unknown, setup.camera, setup.table)
+        out = eyes.draw(im, blobs, seen, unknown, setup.camera, setup.table, area=setup.area)
     else:
         blobs = eyes.find_blobs(im)
         print(f"  {len(blobs)} coloured patches: " + ", ".join(f"{b.colour} ({b.area} px)" for b in blobs))

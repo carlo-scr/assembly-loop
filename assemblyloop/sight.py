@@ -119,7 +119,7 @@ class Sight:
         seen, unknown, blobs = eyes.look(im, setup.camera, setup.table, cat, setup.region((im.shape[1], im.shape[0]), tall))
         outside = [s for s in seen if not setup.inside(s.uv)]
         seen = [s for s in seen if setup.inside(s.uv)]
-        ok, jpg = eyes.cv2.imencode(".jpg", eyes.draw(im, blobs, seen, unknown, setup.camera, setup.table), [eyes.cv2.IMWRITE_JPEG_QUALITY, 80])
+        ok, jpg = eyes.cv2.imencode(".jpg", eyes.draw(im, blobs, seen, unknown, setup.camera, setup.table, area=setup.area), [eyes.cv2.IMWRITE_JPEG_QUALITY, 80])
         with self.lock:
             self.sight = dict(t=time.time(), seen=seen, unknown=[why for _, why in unknown] + [f"{s.name}: outside the part of the table the camera was shown" for s in outside],
                               jpg=jpg.tobytes() if ok else b"", stale=False)

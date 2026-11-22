@@ -550,10 +550,15 @@ def look(bgr, cam, table, cat, region=None):
     return name_all(seen), unknown, blobs
 
 
-def draw(bgr, blobs=(), seen=(), unknown=(), cam=None, table=None, width=1280):
-    """The picture with what was found drawn into it, scaled down for the page."""
+def draw(bgr, blobs=(), seen=(), unknown=(), cam=None, table=None, width=1280, area=None):
+    """The picture with what was found drawn into it, scaled down for the page. `area`: the corners (u, v) of the part
+    of the table the camera was shown, drawn as a yellow line: only blocks whose middle is inside it are used."""
     im = bgr.copy()
     t = max(2, im.shape[1] // 640)
+    if area is not None and cam is not None and table is not None:
+        px = cam.scaled((im.shape[1], im.shape[0])).project([table.point(u, v, table.w0) for u, v in area])
+        cv2.polylines(im, [np.round(px).astype(np.int32)], True, (0, 0, 0), 3 * t)
+        cv2.polylines(im, [np.round(px).astype(np.int32)], True, (40, 220, 240), t)
     for b in blobs:
         cs, _ = cv2.findContours(b.mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         cv2.drawContours(im, cs, -1, (255, 255, 255), t, offset=(b.x0, b.y0))
