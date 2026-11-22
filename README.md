@@ -9,7 +9,7 @@ grip of a Quest controller.
 Today it moves wooden blocks between places taught by hand and stacks them into a tower. Press-fit bricks and cables
 are meant to follow on the same base.
 
-> **Status, 21 November 2026.** Everything here is tested on a stand-in arm (62 tests). On the real right arm, a session,
+> **Status, 21 November 2026.** Everything here is tested on a stand-in arm (77 tests). On the real right arm, a session,
 > the Quest grip and nudging have run; moving blocks, towers and the camera have not. The first session on the arm
 > follows the rungs below, one at a time. The page that fits one screen (the model of the arm, the live pictures) has
 > run on the stand-in arm only: its cameras have not been opened on the rig yet. The older page is kept at `/classic`.
@@ -84,6 +84,35 @@ Good to know:
 A session writes `assembly_logs/guard.jsonl` (everything the arm was asked to do, and why each move ended),
 `assembly_logs/moves.jsonl` (one line per block moved) and `spots.json` (the taught places). None of these are
 tracked by git.
+
+## Designing what to build
+
+`http://127.0.0.1:8777/build` is the designer. It needs no arm and no session.
+
+- **Right:** every kind of block in `blocks.json` (or the example sizes, if there is none), in its colours. Drag one
+  onto the mat. It drops straight down until it meets something, as when the arm puts it down.
+- **Left:** the block you clicked: its colour, how it lies, turning (R, Q, E), moving (arrow keys), copy, remove.
+  Below it the steps, in the order the arm puts the blocks down, and whether each step stands.
+- **Middle:** the mat around the spot it will be built on. The robot is on the near side. Drag the slider at the
+  bottom, or press ▶, to see it being built step by step.
+
+After every change the program checks every step of the build:
+
+- **Does it stand?** Wood on wood, nothing glued: forces that only push, through faces that touch, must carry
+  every block's weight. The bars show how far the table could tilt before something tips over. Below 4° the design
+  is called shaky. A design that stands only once finished is refused: the arm builds it step by step.
+- **Can the arm do it?** Each block comes straight down onto blocks already there, with nothing over it. The jaws
+  close across its short side, and the fingers need room on both sides when they let go: the selected block shows
+  where they go, in red if they would hit something. Square and round blocks are taken the other way round when that
+  leaves room. "Order for the robot" finds an order in which every step stands, if there is one.
+- **Limits:** 150 mm from the spot each way, and about 220 mm high.
+
+Saved designs go to `designs/` (not tracked by git). Four examples come with the program. To build one: on the
+dashboard, Camera tab, press Look, then under "A design" choose it and the spot, and press "Build the design". Every
+block is taken from the last look (the same kind, lying the same way), and let go opening only 10 mm past each side.
+Nothing is built unless the check passes. Lay the blocks out on the mat at least 30 mm from where the design goes.
+
+The gripper's sizes come from UFACTORY's model of it, not from measuring the rig.
 
 ## What keeps the arm safe
 
@@ -161,11 +190,28 @@ It needs OpenCV: `pip install -e ".[real,eyes]"` (with uv: `uv pip install -e ".
    camera's view, and press Look. The picture shows what was made out, the order of the tower, and what is left out
    and why.
 5. **Build a tower from what it sees.** Rehearse in the air first. Every block is taken across its short side and put
-   down the way it lay; tall blocks are held near their top.
+   down the way it lay; tall blocks are held near their top. The gripper is turned to each block as the camera sees it
+   lie, by its last joint, before it comes down.
 
-What it does not do yet: blocks of one colour that touch are one patch and are not made out; a lying cylinder is left
-out (it rolls); a block is never turned over; the tower and the travel above it stay under 300 mm; it does not check
-that the jaws have room beside a block (the lowering is watched for contact, as always). `python -m assemblyloop look`
+**Checked by the camera after every block** (the tick box "check every block", on unless you untick it; towers and
+designs alike). After each put-down the arm goes up and moves above the taught spot that shows farthest from the
+build in the picture, and the camera takes one picture:
+
+- Every block put down so far is looked for where it should be. One that is not there, or more than 8 mm or 12°
+  off, stops the job; the arm stays armed and the log says which block and by how much. If the first picture
+  disagrees, a second one is taken from another place first, in case the arm was in the way.
+- The same picture is looked at as a whole, and the next block is taken where it lies now and turned as it lies now
+  (it may have been pushed), if it is within 30 mm of where it was seen before.
+- When the jaws close, they must close to the width of the block meant, within 10 mm. Another block, or the right one
+  taken the wrong way round, stops the job.
+
+Every such picture is kept in the session's folder under `assembly_logs/<session>/pictures/`, with a line in
+`moves.jsonl` that says what was checked and found. No picture is taken while the arm moves, and pictures never steer
+the arm while it moves: each one changes only where the next move goes. This costs a few seconds per block.
+
+What it does not do yet: blocks of one colour that touch are one patch and are not made out on the mat (on the build
+they are checked one by one, since where each should be is known); a lying cylinder is left out (it rolls); a block is
+never turned over; the tower and the travel above it stay under 300 mm; the wrist cameras are not used. `python -m assemblyloop look`
 takes one picture and writes `look.jpg` with what the camera makes out, without any arm.
 
 ## Layout
@@ -179,12 +225,15 @@ assemblyloop/
   spots.py      places taught by hand; moving a block between them; the levels of a tower
   blocks.py     the kinds of block (blocks.json), how each can lie, and which goes onto a tower next
   eyes.py       the camera: coloured patches, the camera fitted to the table, which block each patch is
-  sight.py      the camera in a session: show it the table, look, build a tower from what it sees
+  sight.py      the camera in a session: show it the table, look, build a tower or a design from what it sees
+  design.py     designs: what to build, block by block; whether each step stands and the gripper fits
   plate.py      a stud plate taught from three poses (press-fit bricks; command line only for now)
   session.py    one session: OFF, DISARMED, AWAITING CALIBRATION, ARMED, RUNNING
   feeds.py      the live pictures: one owner per camera, lent to the block finder for its own picture
   dashboard.py  the local web server of a session, and the older page
+  designs/      the example designs
   web/          the page that fits one screen (index.html, app.css, app.js), the model of the arm (scene.js),
+                the designer (build.html, build.css, build.js),
                 three.js (vendor/, MIT) and UFACTORY's xArm 7 meshes (xarm7/, BSD-3-Clause, from MuJoCo Menagerie)
 tests/          the safety rules and the session, on the stand-in arm
 ```

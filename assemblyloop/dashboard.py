@@ -9,6 +9,8 @@ Two pages over the same buttons:
              which is kept in `web/vendor/` so that the page needs no internet).
   /classic   the older page, one long column of cards (`PAGE` below). Kept as it was: if the new page misbehaves at
              the rig, this one does everything except the model and the live pictures.
+  /build     the designer: lay out what the arm should build, block by block, and see at once whether every step
+             stands and the gripper fits (`design.py` decides; the page draws). Needs no arm and no session.
 
 The page starts at OFF and shows which arms answer on the network. "Start session" connects (read only) -> DISARMED.
 "Arm" switches the arm on -> AWAITING CALIBRATION: the page's own buttons nudge the gripper to each place, which is
@@ -350,7 +352,9 @@ def make_server(session, port=8777):
         elif path == "/api/show_table":
             session.show_table(str(b.get("kind")), b.get("n", 12), bool(b.get("step")))
         elif path == "/api/build_seen":
-            session.build_seen(str(b.get("on")), bool(b.get("rehearse")), bool(b.get("step")))
+            session.build_seen(str(b.get("on")), bool(b.get("rehearse")), bool(b.get("step")), bool(b.get("check", True)))
+        elif path == "/api/build_design":
+            session.build_design(str(b.get("name")), str(b.get("on")), bool(b.get("rehearse")), bool(b.get("step")), bool(b.get("check", True)))
         elif path == "/api/hold":
             if session.hold != "page":
                 raise Refused("with this arm the only hold-to-run switch is the Quest grip")
@@ -359,6 +363,19 @@ def make_server(session, port=8777):
         else:
             return False
         return True
+
+    def ask(path, b):
+        """Buttons that answer with something (the designer's). None: not one of them."""
+        d = b.get("design")
+        if path in ("/api/design/check", "/api/design/save", "/api/design/order") and not isinstance(d, dict):
+            raise ValueError("send the design as an object")
+        if path == "/api/design/check":
+            return session.design_check(d)
+        if path == "/api/design/save":
+            return session.design_save(d)
+        if path == "/api/design/order":
+            return dict(design=session.design_order(d))
+        return None
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"  # connections are kept open: the page reports its key twenty times a second
@@ -389,9 +406,20 @@ def make_server(session, port=8777):
                 pages[0] += 1
                 page = (WEB / "index.html").read_text() if url.path == "/" else PAGE
                 return self._send(page.replace("__TOKEN__", token).replace("__PAGE__", str(pages[0])).encode(), kind="text/html; charset=utf-8")
+            if url.path == "/build":  # the designer: it has no switch of its own, so it does not count as the dashboard's tab
+                return self._send((WEB / "build.html").read_text().replace("__TOKEN__", token).encode(), kind="text/html; charset=utf-8")
+            try:
+                if url.path == "/api/designs":
+                    return self._send(dict(designs=session.design_list()))
+                if url.path == "/api/design":
+                    return self._send(dict(design=session.design_get(parse_qs(url.query).get("name", [""])[0])))
+                if url.path == "/api/design/catalogue":
+                    return self._send(session.design_catalogue())
+            except (Refused, ValueError, KeyError, TypeError) as e:
+                return self._send(dict(error=f"{e}"), HTTPStatus.CONFLICT)
             if url.path.startswith("/web/"):
                 f = files.get(url.path[5:])
-                if f is None or f.name == "index.html":
+                if f is None or f.suffix == ".html":  # the pages themselves only with their token, at / and /build
                     return self._send(dict(error="not found"), HTTPStatus.NOT_FOUND)
                 return self._send(f.read_bytes(), kind=KINDS.get(f.suffix, "application/octet-stream"), keep=f.parent.name in ("vendor", "xarm7"))
             if url.path == "/api/state":
@@ -424,6 +452,9 @@ def make_server(session, port=8777):
                 body = json.loads(raw or b"{}")
                 if not isinstance(body, dict):
                     raise ValueError("the request is not an object")
+                got = ask(self.path, body)
+                if got is not None:
+                    return self._send(got)
                 if not act(self.path, body):
                     return self._send(dict(error="not found"), HTTPStatus.NOT_FOUND)
             except (Refused, Released, ArmFault, KeyError, ValueError, TypeError) as e:

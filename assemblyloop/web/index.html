@@ -113,19 +113,21 @@
       </div>
 
       <div id="pane_cam" hidden>
+        <div class="row"><button id="lookbtn">Look</button><button data-pop="h_showcam" id="showcambtn">Show the camera the table…</button>
+          <label class="chk" title="After every block the arm steps out of the camera's way, one picture checks what is built, and the next block is taken where it lies then"><input type="checkbox" id="camcheck" checked> check every block</label></div>
         <div id="e_why" class="note"></div>
+        <div id="e_seen" class="chips" style="margin-top:6px"></div>
+        <h3>A tower from what it sees</h3>
         <div class="row">
-          <button id="lookbtn">Look</button>
-          <label class="mini col">Tower stands on<select id="e_on"></select></label>
-          <button id="e_build" class="go">Build a tower from what it sees</button>
+          <label class="mini col">Stands on<select id="e_on"></select></label>
+          <button id="e_build" class="go">Build the tower</button>
         </div>
         <div id="e_plan" class="note clamp"></div>
-        <div id="e_seen" class="chips"></div>
-        <h3>Show the camera the table <button class="q" data-pop="h_show">?</button></h3>
+        <h3>A design <a class="ext" href="/build" target="_blank" title="Lay out what to build, and check that it stands">Open the designer ↗</a></h3>
         <div class="row">
-          <label class="mini col">With this block<select id="e_kind"></select></label>
-          <label class="mini col narrow">Places<input type="number" id="e_n" value="12" min="8" max="20"></label>
-          <button id="e_show">Show the camera the table</button>
+          <label class="mini col">Design<select id="d_name"></select></label>
+          <label class="mini col">Built on<select id="d_on"></select></label>
+          <button id="d_build" class="go" title="Every block of the design is taken from the last look, and put down where the design says">Build the design</button>
         </div>
       </div>
 
@@ -147,7 +149,12 @@
       <p>Instead of teaching spots by hand. Bring the gripper over the middle of the area the blocks will lie in, pointing straight down. Hold a bar or plank between the open jaws by its ends, lying level, the jaws across its short side, and press Close. Then press Find the table and let the arm move: the gripper comes straight down slowly until the bar meets the mat, lets go, and the label reads ARMED. Stop it if it visibly pushes into the table. The tower will stand where the bar was put down.</p>
       <p>"The gripper is at the table now": you have brought the fingertips down onto the mat yourself; nothing comes down, the bar is let go there. "Put the area here": the table was found before and only the place should change; bring the gripper over the new middle at any height and it comes straight down to the height found before.</p></div>
     <div class="pop" id="h_tower"><h3>A tower</h3><p>Stand one block on every spot except the one the tower goes on, choose that spot, enter the block height and press Build. The first block goes down at the taught height and each next one a block height higher, let go a little above the block below. Take down returns every block to its own spot, top first.</p><p>Start with both boxes ticked: "rehearse in the air" does the whole travel without coming down, and "one step at a time" waits for Next step before every step.</p></div>
-    <div class="pop" id="h_show"><h3>Show the camera the table</h3><p>Once, and again whenever the camera or the table was moved. Teach spots at opposite corners of the area the blocks will lie in. Lay ONE bar or slab flat on a spot, jaws across its short side, say under "Stands on" (Blocks) which spot that is, and keep everything else off the mat. The arm first tries a few places to wait and keeps the one from which the camera sees most of the mat, then carries the block to places around where it lies (only where it reaches and the mat is) and steps aside for a picture after each. Blocks must lie on the grey mat and must not touch each other.</p></div>
+    <div class="pop" id="h_showcam"><h3>Show the camera the table</h3>
+      <div class="row">
+        <label class="mini col">With this block<select id="e_kind"></select></label>
+        <label class="mini col narrow">Places<input type="number" id="e_n" value="12" min="8" max="20"></label>
+        <button id="e_show" class="go">Show the camera the table</button>
+      </div><p>Once, and again whenever the camera or the table was moved. Lay ONE bar or plank flat on a spot, jaws across its short side, say under "Stands on" (Blocks) which spot that is, and keep everything else off the mat. The arm first tries a few places to wait and keeps the one from which the camera sees most of the mat, then carries the block to places around where it lies (only where it reaches and the mat is) and steps aside for a picture after each. Blocks must lie on the grey mat and must not touch each other.</p></div>
   </section>
 </div>
 

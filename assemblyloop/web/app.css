@@ -14,6 +14,7 @@ body{background:var(--bg);color:var(--ink);font:13.5px/1.4 system-ui,-apple-syst
 [hidden]{display:none!important}
 h2{font-size:11px;margin:0;font-weight:650;letter-spacing:.09em;text-transform:uppercase;color:var(--mute)}
 h3{font-size:12.5px;margin:10px 0 0;font-weight:650;display:flex;align-items:center;gap:6px}
+a.ext{margin-left:auto;font-size:12px;font-weight:600;color:var(--accent);text-decoration:none}a.ext:hover{text-decoration:underline}
 p{margin:6px 0 0}
 
 /* ---------- top bar */

@@ -142,11 +142,17 @@ def demo_spots():
     return s
 
 
-def plan_move(spots, src, dst, here, P, rehearse=False, src_up=0.0, dst_up=0.0, grip_mm=None):
+def plan_move(spots, src, dst, here, P, rehearse=False, src_up=0.0, dst_up=0.0, release_counts=None, grip_mm=None):
     """Steps to take the thing at `src` and put it down at `dst`, starting from wherever the arm is (`here`).
     `src_up` / `dst_up` [mm] raise the pick-up / the put-down above the taught spot (the levels of a tower).
-    A rehearsal does the same travel at the travel height and never comes down. `grip_mm`: how wide the thing is
-    across the jaws, if that is known: it is then held gently (see `Params.squeeze_mm`), not as hard as the jaws close."""
+    `release_counts`: let go by opening only this far (a design's block, whose neighbours stand close), not fully.
+    `grip_mm`: how wide the block is across the jaws, if known. It is then closed on GENTLY: to `P.squeeze_mm` under
+    that width and no further, so that the fingers do not bend. The jaws then stop where they were sent whether a block
+    is between them or not: the grip cannot tell that the block is there (a job that takes pictures looks afterwards
+    whether it arrived, sight.py). It can still tell that something WIDER is there, which stops the jaws short: that
+    stops the move (WrongGrip). With `P.squeeze_mm` at 0 the jaws close as far as they go, and closing to any other
+    width than the block's stops the move.
+    A rehearsal does the same travel at the travel height and never comes down."""
     if src == dst:
         raise Refused("from and to are the same spot")
     up = spots.up
@@ -160,10 +166,8 @@ def plan_move(spots, src, dst, here, P, rehearse=False, src_up=0.0, dst_up=0.0, 
     if not rehearse:
         first = gs + min(20.0, spots.lift) * up
         S += [dict(name=f"lower around the thing at {ns}", kind="move", to=gs, speed=P.slow, stall_mm=P.stall_mm),
-              # a thing of known width is closed on to just under that width and no further: the jaws never squeeze as
-              # hard as they can (which bends the fingers). Whether something is held can then not be told from the jaws.
-              dict(name="close on it", kind="grip", counts=P.shut_counts, must_hold=True) if not grip_mm or P.squeeze_mm <= 0 else
-              dict(name="close on it, gently", kind="grip", counts=max(0, int(round((float(grip_mm) - P.squeeze_mm) * 10.0)))),
+              dict(name="close on it", kind="grip", counts=P.shut_counts, must_hold=True, expect_mm=grip_mm) if not grip_mm or P.squeeze_mm <= 0 else
+              dict(name="close on it, gently", kind="grip", counts=max(0, int(round((float(grip_mm) - P.squeeze_mm) * 10.0))), expect_mm=grip_mm, gentle=True),
               dict(name="read the grasp", kind="read"),
               dict(name="lift it, slowly at first", kind="move", to=first, speed=P.press, stall_mm=P.pull_stall_mm, let_go_if_blocked=True),
               dict(name="lift to the travel height", kind="move", to=hs, speed=P.lift)]
@@ -174,7 +178,7 @@ def plan_move(spots, src, dst, here, P, rehearse=False, src_up=0.0, dst_up=0.0, 
     if not rehearse:
         S += [dict(name=f"lower it onto {nd}", kind="move", to=gd, speed=P.slow, stall_mm=P.stall_mm, rest_ok_mm=P.rest_ok_mm),
               dict(name="read the put-down", kind="read"),
-              dict(name="let go", kind="grip", counts=P.open_counts),
+              dict(name="let go", kind="grip", counts=P.open_counts if release_counts is None else int(min(P.open_counts, max(P.shut_counts, release_counts)))),
               dict(name="lift clear", kind="move", to=hd, speed=P.lift)]
     else:
         S += [dict(name="open the gripper (in the air)", kind="grip", counts=P.open_counts)]

@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Assembly designer</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/web/app.css">
+<link rel="stylesheet" href="/web/build.css">
+<script type="importmap">{"imports":{"three":"/web/vendor/three.module.min.js"}}</script>
+</head><body class="designer">
+
+<header>
+  <div class="brand"><i></i>Assembly loop</div>
+  <div class="mode">Designer</div>
+  <div class="namebox"><input type="text" id="dname" placeholder="name this design" maxlength="40" spellcheck="false"><span id="dirty" title="changed since it was saved" hidden>●</span></div>
+  <div class="tools">
+    <button id="newbtn" title="Start an empty design">New</button>
+    <div class="dropwrap"><button id="openbtn" title="Open a saved design or an example">Open ▾</button><div id="openlist" class="menu" hidden></div></div>
+    <button id="savebtn" class="go" title="Save it, so that the dashboard can build it">Save</button>
+    <span class="sep"></span>
+    <button id="undobtn" title="Undo (Ctrl+Z)">Undo</button><button id="redobtn" title="Redo (Ctrl+Shift+Z)">Redo</button>
+  </div>
+  <div id="verdict" class="verdict"><i></i><div><b id="vtitle">Empty</b><small id="vsub">drag blocks in from the right</small></div></div>
+  <a class="back" href="/" title="The dashboard, where a saved design is built">Dashboard ↗</a>
+</header>
+<div id="msg" hidden></div>
+
+<main class="designer">
+  <!-- ---------------------------------------------------------------- left: the selected block, the steps, the check -->
+  <div class="col dleft">
+    <section class="card" id="selcard">
+      <div class="head"><h2 id="seltitle">Block</h2><span class="grow"></span><button class="q" data-pop="h_keys" title="Keys">?</button></div>
+      <div id="sel_none" class="muted pad">Click a block to change it, or drag one in from the right.</div>
+      <div id="sel_on" hidden>
+        <div class="lbl">Colour</div>
+        <div id="sel_col" class="swatches"></div>
+        <div class="lbl">Lies</div>
+        <div id="sel_rest" class="seg wide"></div>
+        <div class="lbl">Turn <span id="sel_ang" class="val"></span></div>
+        <div class="row tight">
+          <button data-turn="90" title="Turn 90° counter-clockwise (R)">↺ 90°</button><button data-turn="15" title="Turn 15° counter-clockwise (Q)">↺ 15°</button>
+          <button data-turn="-15" title="Turn 15° clockwise (E)">↻ 15°</button><button data-turn="-90" title="Turn 90° clockwise (Shift+R)">↻ 90°</button>
+        </div>
+        <div class="lbl">Move <span id="sel_pos" class="val"></span></div>
+        <div class="row tight nudge">
+          <button data-move="0,5" title="Left (←)">←</button><button data-move="5,0" title="Forward, away from the robot (↑)">↑</button>
+          <button data-move="-5,0" title="Back, towards the robot (↓)">↓</button><button data-move="0,-5" title="Right (→)">→</button>
+          <span class="grow"></span><button id="dupbtn" title="Duplicate (D)">Copy</button><button id="delbtn" class="danger" title="Remove (Delete)">Remove</button>
+        </div>
+        <div id="sel_notes" class="notes"></div>
+      </div>
+    </section>
+
+    <section class="card" id="stepcard">
+      <div class="head"><h2>Steps</h2><span class="muted small" id="stepcount"></span><span class="grow"></span>
+        <button id="orderbtn" class="small" title="Find an order in which every step stands and the gripper is clear">Order for the robot</button></div>
+      <ol id="dsteps" class="steps"></ol>
+      <div id="steps_none" class="muted pad">The arm puts blocks down in this order, top of the list first.</div>
+    </section>
+
+    <section class="card" id="checkcard">
+      <div class="head"><h2>Does it stand?</h2><span class="grow"></span><button class="q" data-pop="h_check">?</button></div>
+      <div id="chart" class="chart" title="How far the table could tilt before something tips, after each step"></div>
+      <div id="checknote" class="muted"></div>
+      <div id="needs" class="needs"></div>
+    </section>
+
+    <div class="pop" id="h_keys"><h3>Keys</h3><table>
+      <tr><td><kbd>R</kbd> <kbd>⇧R</kbd></td><td>turn 90° either way</td></tr><tr><td><kbd>Q</kbd> <kbd>E</kbd></td><td>turn 15° either way</td></tr>
+      <tr><td><kbd>L</kbd></td><td>lay it the next way</td></tr><tr><td><kbd>C</kbd></td><td>next colour</td></tr>
+      <tr><td><kbd>←↑↓→</kbd></td><td>move 5 mm (with <kbd>⇧</kbd>: 1 mm)</td></tr><tr><td><kbd>D</kbd></td><td>copy</td></tr>
+      <tr><td><kbd>Delete</kbd></td><td>remove</td></tr><tr><td><kbd>Ctrl Z</kbd> / <kbd>Ctrl ⇧Z</kbd></td><td>undo / redo</td></tr>
+      <tr><td><kbd>Alt</kbd> while dragging</td><td>no snapping</td></tr></table>
+      <p>Up is away from the robot. Blocks drop straight down until they meet something, as when the arm puts them down.</p></div>
+    <div class="pop" id="h_check"><h3>Does it stand?</h3>
+      <p>After every step the program works out whether what stands so far can carry its own weight: wood on wood, nothing glued, only faces that touch push. The bars show how far the table could be tilted before something tips over; higher is safer. Below <b id="shaky_deg">4</b>° a small bump, such as the gripper letting go, may topple it.</p>
+      <p>It also checks what the arm needs: every block comes straight down from above onto what is already there, the jaws close across its short side, and the fingers need room on both sides when they open. The gripper's sizes are UFACTORY's, not measured on the rig.</p></div>
+  </div>
+
+  <!-- ---------------------------------------------------------------- middle: the build area -->
+  <section class="card stage" id="view">
+    <canvas id="gl"></canvas>
+    <div id="labels"></div>
+    <div class="over tl"><span id="t_h" class="tag"></span><span id="t_n" class="tag"></span><span id="t_ms" class="tag faint"></span></div>
+    <div class="over tr seg small" id="views"><button data-view="iso" class="on">3D</button><button data-view="robot">From the robot</button><button data-view="top">Top</button><button data-view="side">Side</button></div>
+    <div class="over bottom" id="timeline">
+      <button id="playbtn" title="Watch it being built">▶</button>
+      <input type="range" id="upto" min="0" max="0" value="0">
+      <span id="uptotext" class="tag"></span>
+    </div>
+    <div id="dropnote" class="dropnote" hidden></div>
+    <div id="v_fail" class="empty" hidden></div>
+  </section>
+
+  <!-- ---------------------------------------------------------------- right: the blocks -->
+  <section class="card dright" id="palette">
+    <div class="head"><h2>Blocks</h2><span class="grow"></span><span id="catsrc" class="muted small"></span></div>
+    <div id="kinds"></div>
+    <div class="muted small foot">Drag a block onto the mat. It lands on whatever is under it.</div>
+  </section>
+</main>
+
+<footer>
+  <div id="hintline">Drag blocks in from the right · R turns · Delete removes · Ctrl+Z undoes</div>
+  <a href="/" title="The dashboard">dashboard</a>
+</footer>
+<div id="carry" class="carry" hidden></div>
+
+<script>window.TOKEN = "__TOKEN__";</script>
+<script type="module" src="/web/build.js"></script>
+</body></html>

@@ -10,6 +10,10 @@
      that block would have in the picture and shifts and turns it until it covers the blob. The best cover names the
      block and says where its middle is and which way it points. This is what makes a camera that looks at the table
      from the side usable: a tall block's outline is its top AND its sides, and only the drawn solid accounts for that.
+  5. `find_placed` checks one block that was put down (on the table or on other blocks): it draws the block where it
+     should be, at its height, and shifts and turns it until it covers the block's colour best, looking only near
+     there and leaving out what blocks nearer the camera hide. Blocks of one colour that touch, which `make_out`
+     cannot tell apart, are fine here: where each one should be is known.
 
 Lengths are millimetres. Points are in the arm's base frame, shifted along the gripper's axis so that a block stands
 where the gripper goes to hold it (see `Table`): the camera is fitted to where the ARM put a block, so everything
@@ -245,6 +249,7 @@ class Setup:
     side: str = "right"
     fit_mm: float = 0.0  # how far the camera was off, at worst, when it looked for the block the arm had just put down
     when: float = 0.0
+    wait: tuple | None = None  # where on the table (u, v) the arm waited for the pictures: the place from which the camera saw most of the mat
 
     def region(self, size, tall_mm=0.0, around_mm=60.0):
         """A mask of where to look in a picture of this size: the shown part of the table and a little around it
@@ -263,12 +268,13 @@ class Setup:
 
     def to_dict(self):
         return dict(camera=self.camera.to_dict(), axes=self.table.axes.tolist(), w0=self.table.w0, w_grasp=self.w_grasp, rpy_ref=[float(v) for v in self.rpy_ref],
-                    angle_ref=self.angle_ref, area=[[float(u), float(v)] for u, v in self.area], side=self.side, fit_mm=self.fit_mm, when=self.when)
+                    angle_ref=self.angle_ref, area=[[float(u), float(v)] for u, v in self.area], side=self.side, fit_mm=self.fit_mm, when=self.when,
+                    wait=None if self.wait is None else [float(v) for v in self.wait])
 
     @classmethod
     def from_dict(cls, d):
         return cls(Camera.from_dict(d["camera"]), Table(np.array(d["axes"], float), float(d["w0"])), float(d["w_grasp"]), np.array(d["rpy_ref"], float), float(d["angle_ref"]),
-                   [tuple(p) for p in d["area"]], str(d.get("side", "right")), float(d.get("fit_mm", 0.0)), float(d.get("when", 0.0)))
+                   [tuple(p) for p in d["area"]], str(d.get("side", "right")), float(d.get("fit_mm", 0.0)), float(d.get("when", 0.0)), None if d.get("wait") is None else tuple(d["wait"]))
 
     def save(self, path):
         Path(path).write_text(json.dumps(self.to_dict(), indent=1))
@@ -460,6 +466,74 @@ def make_out(blob, cam, table, cat, good=0.80):
         return None, f"it looks most like a {kind.name} ({rest.name}) but fits only {100 * s:.0f}%: is it touching another block, or missing from the catalogue?"
     turns = rest.turns
     return Seen(kind, rest, (float(x[0]), float(x[1])), float(x[2] % turns) if turns else 0.0, score=s, colour=blob.colour), ""
+
+
+def colour_mask(bgr, colour, s_min=115, v_min=70):
+    """Where this picture shows the colour `colour` strongly (as `find_blobs` sees it)."""
+    hsv = cv2.cvtColor(cv2.GaussianBlur(bgr, (0, 0), max(0.8, bgr.shape[1] / 2000.0)), cv2.COLOR_BGR2HSV)
+    m = np.zeros(bgr.shape[:2], bool)
+    for n, lo, hi in HUES:
+        if n == colour:
+            m |= (hsv[..., 0] >= lo) & (hsv[..., 0] < hi)
+    return m & (hsv[..., 1] >= s_min) & (hsv[..., 2] >= v_min)
+
+
+def find_placed(bgr, cam, table, placed, k, window_mm=30.0):
+    """Where block k of `placed` is in this picture, looked for only near where it should be. `placed`: every block
+    that should stand now, as dicts (kind, rest, uv, angle, z: its bottom above the table [mm]). Returns dict(fit: how
+    well its outline covers its colour, 0 to 1; uv and angle where it fits best; off_mm and turn_deg from where it
+    should be; visible: the part of it that nothing nearer the camera hides), or None for a block without a colour."""
+    me = placed[k]
+    if me["kind"].colour is None:
+        return None
+    cam = cam.scaled((bgr.shape[1], bgr.shape[0]))
+    R, _ = cv2.Rodrigues(np.asarray(cam.rvec, float))
+    eye = -R.T @ np.asarray(cam.tvec, float).reshape(3)
+
+    def hull(p, u, v, a):
+        return outline(cam, solid(p["rest"], Table(table.axes, table.w0 + p["z"]), u, v, a, p["kind"].shape))
+
+    def middle(p):
+        return table.point(p["uv"][0], p["uv"][1], table.w0 + p["z"] + p["rest"].height / 2.0)
+
+    c = middle(me)
+    h0 = hull(me, me["uv"][0], me["uv"][1], me["angle"])
+    px_mm = float(np.linalg.norm(cam.project([c])[0] - cam.project([c + 10.0 * table.axes[:, 0]])[0])) / 10.0
+    pad = int(window_mm * px_mm) + 4
+    W, H = cam.size
+    x0, y0 = max(0, int(h0[:, 0].min()) - pad), max(0, int(h0[:, 1].min()) - pad)
+    x1, y1 = min(W, int(h0[:, 0].max()) + pad + 1), min(H, int(h0[:, 1].max()) + pad + 1)
+    if x1 - x0 < 4 or y1 - y0 < 4:
+        return dict(fit=0.0, uv=tuple(me["uv"]), angle=me["angle"], off_mm=0.0, turn_deg=0.0, visible=0.0)
+    origin = np.array([x0, y0], float)
+
+    def fill(h):
+        m = np.zeros((y1 - y0, x1 - x0), np.uint8)
+        cv2.fillConvexPoly(m, np.round((h - origin) * 16).astype(np.int32), 1, shift=4)
+        return m.astype(bool)
+
+    hide, same = np.zeros((y1 - y0, x1 - x0), bool), np.zeros((y1 - y0, x1 - x0), bool)
+    for j, p in enumerate(placed):
+        if j == k:
+            continue
+        if np.linalg.norm(middle(p) - eye) < np.linalg.norm(c - eye):
+            hide |= fill(hull(p, p["uv"][0], p["uv"][1], p["angle"]))  # nearer the camera: what it covers is not this block
+        elif p["kind"].colour == me["kind"].colour:
+            same |= fill(hull(p, p["uv"][0], p["uv"][1], p["angle"]))  # behind it, of the same colour: not this block either
+    target = colour_mask(bgr[y0:y1, x0:x1], me["kind"].colour) & ~hide & ~same
+
+    def score(x):
+        d = fill(hull(me, x[0], x[1], x[2])) & ~hide
+        union = int((d | target).sum())
+        return 0.0 if union == 0 else float((d & target).sum()) / union
+
+    want = np.array([me["uv"][0], me["uv"][1], me["angle"]], float)
+    x, fit = _climb(score, want.copy(), np.array([4.0, 4.0, 0.0 if me["rest"].round else 6.0]), rounds=5)
+    whole = fill(h0)
+    t = me["rest"].turns
+    turn = 0.0 if not t else float((x[2] - want[2] + t / 2.0) % t - t / 2.0)
+    return dict(fit=fit, uv=(float(x[0]), float(x[1])), angle=float(x[2]), off_mm=float(np.hypot(*(x[:2] - want[:2]))), turn_deg=turn,
+                visible=float((whole & ~hide).sum()) / max(1, int(whole.sum())))
 
 
 def look(bgr, cam, table, cat, region=None):
