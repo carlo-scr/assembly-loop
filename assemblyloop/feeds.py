@@ -208,6 +208,9 @@ class Feeds:
         with self.cond:
             self.closed = True
             self.cond.notify_all()
+        for o in self.owners:  # each owner lets go of its camera before the program ends (ended in the middle of a read, the program aborted on its way out)
+            if o.is_alive():
+                o.join(timeout=3.0)
 
 
 class MadeUp:
