@@ -130,6 +130,10 @@ def test_setup_rehearsal_next_step_and_stop(dashboard):
     assert request.value.post_data_json == {"dst": "B", "count": 2, "rehearse": True, "step": True}
     page.wait_for_function("window.PHASE === 'PAUSED'")
     until(page, lambda: page.locator("#nextbtn").is_enabled())
+    page.wait_for_function("last?.quest?.why === 'released' && last?.job?.waiting")
+    assert page.locator("#run_status").inner_text() == "Task paused"
+    hint = page.locator("#hint").inner_text()
+    assert "lost" not in hint.lower() and "hold the grip" in hint and "Next step" in hint
     assert not any(action[0] == "move" for action in session.arm.log)
     assert page.locator("#run_progress").is_visible()
     page.locator("#step_details > summary").click()
@@ -173,6 +177,7 @@ def test_task_tabs_keyboard_navigation_and_camera_source(dashboard):
     page.keyboard.press("End")
     assert page.locator("#tab_cam").get_attribute("aria-selected") == "true"
     assert page.locator("#pane_cam").is_visible()
+    assert page.locator("details.camera-setup").get_attribute("open") is not None
     page.locator("#e_source").select_option("C")
     until(page, lambda: session.thing_at == "C")
     until(page, lambda: page.locator("#thing").input_value() == "C")

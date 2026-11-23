@@ -273,10 +273,11 @@ progress::-moz-progress-bar { background: var(--accent); }
 .vision-actions { align-items: flex-end; }
 .vision-actions > button { min-height: 38px; }
 .detected-blocks { margin: 10px 0; }
-.camera-setup { margin-top: 20px; }
+.camera-setup { margin-top: 16px; margin-bottom: 18px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
 .camera-setup > summary { color: var(--ink); font-size: 12px; font-weight: 550; }
 .camera-setup .section-heading .muted { margin: 0; flex: 1; font-size: 11px; }
 .camera-setup .form-grid { align-items: end; }
+.camera-setup .field-help { margin: 12px 0; font-size: 11px; }
 
 /* Nonmodal help leaves the session's stop control available. */
 .pop { display: none; position: fixed; z-index: 40; left: 30px; bottom: 55px; width: 430px; max-width: calc(100vw - 32px); max-height: calc(100dvh - 175px); overflow: auto; padding: 20px; border: 1px solid var(--faint); border-radius: 8px; background: var(--card); box-shadow: var(--shadow); color: var(--mute); font-size: 12px; }

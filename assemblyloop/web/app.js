@@ -114,7 +114,7 @@ function runFeedback(s) {
   const teaching = s.phase === "AWAITING CALIBRATION", ready = s.phase === "ARMED";
   $("workspace_title").textContent = teaching ? "Teach places" : calibrating ? "Calibration in progress" : busy ? "Task in progress" : ready ? names[tab] : s.phase === "STOPPED" ? "Session stopped" : "Prepare your session";
   $("workspace_subtitle").textContent = teaching ? "Position the gripper, save each place, then confirm your workspace." : busy ? "Release the grip to pause. STOP SESSION ends the session." : ready ? "Choose a task, check its settings, and hold the grip to move." : "Choose an arm and complete the session checks to unlock the controls.";
-  $("run_mode").textContent = calibrating ? "Calibration" : busy ? (j && j.rehearse ? "Air rehearsal" : "Physical placement") : ($("rehearse").checked ? "Air rehearsal" : "Physical placement") + " · " + ($("step").checked ? "One step at a time" : "Continuous sequence");
+  $("run_mode").textContent = calibrating ? "Calibration · physical motion" : busy ? (j && j.rehearse ? "Current task: air rehearsal" : "Current task: physical motion") : ($("rehearse").checked ? "Air rehearsal" : "Physical placement") + " · " + ($("step").checked ? "One step at a time" : "Continuous sequence");
   show("job_empty", !j && !busy); show("jobbox", !!j || busy); show("run_progress", !!j || calibrating);
   show("step_details", !!(j && j.steps && j.steps.length));
   if (!j) {
@@ -136,6 +136,7 @@ function runFeedback(s) {
 function interfaceHint(s) {
   if (s.phase === "AWAITING CALIBRATION") return s.hint.replace("Then press Done.", "Then choose Finish teaching.");
   if (s.phase === "ARMED") return "Choose Move a block, Tower, or Camera, check the run options, then hold the grip to move.";
+  if (s.phase === "PAUSED" && s.quest && s.quest.why === "released") return "Paused: hold the grip" + (s.job && s.job.waiting ? " and choose Next step to continue." : " to continue.");
   return s.hint;
 }
 
@@ -193,7 +194,7 @@ function render(s) {
   // ---- the controls
   show("p_none", !(teachOn || armed)); show("p_teach", teachOn); show("p_run", armed);
   $("p_none_text").textContent = !s.connected ? "The controls appear here once a session is started and armed." : "The controls appear here once the arm is armed.";
-  $("jognote").textContent = c.busy ? "moving while you hold the grip…" : (c.note || "");
+  $("jognote").textContent = c.busy ? (q && q.held ? "Command active while the grip is held." : "Command waiting. Hold the grip to move.") : (c.note || "");
   const tilt = (s.arm || {}).tilt_deg == null ? null : s.arm.tilt_deg;
   $("tiltnote").textContent = tilt == null ? "" : (tilt < 0.5 ? "The gripper points straight down." : `Tilted ${tilt.toFixed(0)}° from straight down.` + (c.spots.length ? " Remove the saved spots first." : ""));
   const sv = $("savedbtn"); show("savedbtn", !!c.saved && teachOn); if (c.saved) sv.textContent = `Use saved spots (${c.saved.names.join(", ")}; ${c.saved.when})`;
@@ -226,6 +227,7 @@ function render(s) {
 
   // ---- the camera that finds the blocks
   const e = s.eye || {}, g = e.sight;
+  once("camera-calibrated", !!e.shown, () => { document.querySelector(".camera-setup").open = !e.shown; });
   $("e_why").textContent = e.why ? e.why.charAt(0).toUpperCase() + e.why.slice(1) + "." : (e.shown ? `The camera was shown the table on ${e.shown} and found the block within ${e.fit_mm} mm.` : "");
   once("bars", e.bars || [], () => options($("e_kind"), e.bars || [], []));
   once("seen", g ? [g.t, g.stale] : null, () => { $("e_seen").replaceChildren(...(g ? g.seen.map(b => chip("✓", "y", b.name, `${b.lies}, fits ${b.fit}%`)).concat(g.unknown.map(w => chip("?", "n", "not made out", w))) : [])); });
