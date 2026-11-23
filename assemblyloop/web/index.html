@@ -1,180 +1,133 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Assembly loop</title>
-<link rel="icon" href="data:,">
-<link rel="stylesheet" href="/web/app.css">
-<script type="importmap">{"imports":{"three":"/web/vendor/three.module.min.js"}}</script>
-</head><body>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#151816">
+  <title>Assembly Loop · Robot workspace</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/web/app.css">
+  <script type="importmap">{"imports":{"three":"/web/vendor/three.module.min.js"}}</script>
+</head>
+<body>
+  <a class="skip-link" href="#ctl">Skip to controls</a>
+  <header class="app-header">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="M7 23V9l9-5 9 5v14l-9 5-9-5Z" stroke="currentColor" stroke-width="1.5"/><path d="m7 9 9 5 9-5M16 14v14M11.5 6.5l9 5v9l-9 5" stroke="currentColor" stroke-width="1.5"/></svg>
+      <div><h1>Assembly Loop</h1><span class="brand-sub">Robot workspace</span></div>
+    </div>
+    <div class="session-state"><span class="eyebrow">Session state</span><div id="phase" class="phase" role="status">Connecting…</div></div>
+    <div id="hold" class="hold"><i aria-hidden="true"></i><div><b id="held">No session</b><small id="holdsub">Hold-to-run</small></div></div>
+    <button id="stop" title="Stops the arm and ends this session" disabled><span class="stop-square" aria-hidden="true"></span>STOP SESSION</button>
+  </header>
+  <div class="statusbar"><span class="status-label">NEXT</span><div id="hint">Connecting to the local program…</div><span class="local-label"><i aria-hidden="true"></i>Local control</span></div>
+  <div id="msg" role="alert" hidden><span id="msg_text"></span><button id="msg_close" aria-label="Dismiss message">×</button></div>
 
-<header>
-  <div class="brand"><i></i>Assembly loop</div>
-  <div id="phase" class="phase">…</div>
-  <div id="hint"></div>
-  <div id="hold" class="hold"><i></i><div><b id="held">no session</b><small id="holdsub"></small></div></div>
-  <button id="stop" title="Stops the arm and ends this session">STOP SESSION</button>
-</header>
-<div id="msg" hidden></div>
+  <main class="workspace">
+    <div class="col left">
+      <section id="seq" class="card" aria-labelledby="setup-title">
+        <div class="panel-heading"><div><span class="eyebrow">Prepare</span><h2 id="setup-title">Session setup</h2></div><button id="setup-toggle" class="text-button" aria-expanded="false" aria-controls="setup-steps">Show details</button></div>
+        <ol class="rungs" id="setup-steps">
+          <li id="r1" class="cur"><span class="n" aria-hidden="true">1</span>
+            <div class="b"><h3>Connect<span class="sum" id="r1sum"></span></h3>
+              <div id="s_off"><p class="muted">Choose the arm for this session.</p><div id="arms" class="armlist" role="group" aria-label="Choose an arm"></div><label class="chk" id="questrow" hidden><input type="checkbox" id="usequest">Use the Quest grip instead of the space bar</label></div>
+              <div id="s_on" class="muted" hidden></div><div id="ended" class="warn"></div>
+            </div>
+            <div class="a"><button id="startbtn" class="go" disabled>Start session <span aria-hidden="true">↗</span></button><button id="endbtn" hidden>End session</button></div>
+          </li>
+          <li id="r2" class="todo"><span class="n" aria-hidden="true">2</span><div class="b"><h3>Check readiness<span class="sum" id="r2sum"></span></h3><div id="k_none" class="muted">Checks start with the session.</div><div id="checks" class="checks-list"></div></div></li>
+          <li id="r3" class="todo"><span class="n" aria-hidden="true">3</span><div class="b"><h3>Arm the robot<span class="sum" id="r3sum"></span></h3><div class="muted">Arming moves nothing. Motion requires a command and the hold-to-run grip.</div></div><div class="a"><button id="armbtn" class="go" disabled>Arm robot</button><button id="disbtn" hidden>Disarm</button></div></li>
+          <li id="r4" class="todo"><span class="n" aria-hidden="true">4</span><div class="b"><h3>Teach spots<span class="sum" id="r4sum"></span></h3><div id="c_status" class="muted"></div></div><div class="a"><button id="calbtn" hidden>Teach again</button></div></li>
+          <li id="r5" class="todo"><span class="n" aria-hidden="true">5</span><div class="b"><h3>Run a task<span class="sum" id="r5sum"></span></h3><div id="runline" class="muted"></div></div></li>
+        </ol>
+      </section>
 
-<main>
-<div class="col left">
-
-  <section id="seq" class="card">
-    <h2>Sequence</h2>
-    <ol class="rungs">
-      <li id="r1"><span class="n">1</span>
-        <div class="b"><h3>Session<span class="sum" id="r1sum"></span></h3>
-          <div id="s_off"><div id="arms" class="armlist"></div>
-            <label class="chk" id="questrow" hidden><input type="checkbox" id="usequest"> use the Quest grip instead of the space bar</label></div>
-          <div id="s_on" class="muted" hidden></div>
-          <div id="ended" class="warn"></div></div>
-        <div class="a"><button id="startbtn" class="go">Start session</button><button id="endbtn" hidden>End session</button></div></li>
-      <li id="r2"><span class="n">2</span>
-        <div class="b"><h3>Checks<span class="sum" id="r2sum"></span></h3><div id="k_none" class="muted">Start with the session.</div><div id="checks" class="chips"></div></div></li>
-      <li id="r3"><span class="n">3</span>
-        <div class="b"><h3>Arm<span class="sum" id="r3sum"></span></h3><div class="muted">Arming moves nothing. The arm moves only during a move, and only while the grip is held.</div></div>
-        <div class="a"><button id="armbtn" class="go">Arm</button><button id="disbtn" hidden>Disarm</button></div></li>
-      <li id="r4"><span class="n">4</span>
-        <div class="b"><h3>Places<span class="sum" id="r4sum"></span></h3><div id="c_status" class="muted"></div></div>
-        <div class="a"><button id="calbtn" hidden>Teach again</button></div></li>
-      <li id="r5"><span class="n">5</span>
-        <div class="b"><h3>Run<span class="sum" id="r5sum"></span></h3><div id="runline" class="muted"></div></div></li>
-    </ol>
-  </section>
-
-  <section id="ctl" class="card">
-
-    <div id="p_none" class="empty"><h2>Controls</h2><p id="p_none_text">The controls appear here once the arm is armed.</p></div>
-
-    <div id="p_teach" hidden>
-      <div class="head"><h2>Move the gripper</h2><span id="jognote" class="note"></span><button class="q" data-pop="h_nudge">?</button></div>
-      <div class="keys">
-        <div class="kgroup">
-          <button class="key act" data-j="up" data-k="KeyQ"><kbd>Q</kbd><span>Up</span></button>
-          <button class="key act" data-j="fwd" data-k="KeyW"><kbd>W</kbd><span>Forward</span></button>
-          <button class="key act" data-j="down" data-k="KeyE"><kbd>E</kbd><span>Down</span></button>
-          <button class="key act" data-j="left" data-k="KeyA"><kbd>A</kbd><span>Left</span></button>
-          <button class="key act" data-j="back" data-k="KeyS"><kbd>S</kbd><span>Back</span></button>
-          <button class="key act" data-j="right" data-k="KeyD"><kbd>D</kbd><span>Right</span></button>
+      <section id="ctl" class="card controls" aria-labelledby="workspace_title" tabindex="-1">
+        <div class="panel-heading controls-heading"><div><span class="eyebrow">Operate</span><h2 id="workspace_title">Motion &amp; tasks</h2><p id="workspace_subtitle" class="muted">Set up a session to begin.</p></div></div>
+        <div id="p_none" class="empty controls-empty">
+          <svg viewBox="0 0 64 64" fill="none" aria-hidden="true"><path d="M24 13h16v19l10 10v11H39V42H25v11H14V42l10-10V13Z" stroke="currentColor" stroke-width="1.5"/><path d="M20 13h24M29 20h6M29 26h6M27 36h10M21 58h22" stroke="currentColor" stroke-width="1.5"/></svg>
+          <h3>Controls follow the setup</h3><p id="p_none_text">Choose an arm, start a session, then complete the readiness checks.</p><span class="empty-caption">Teach spots → choose a task → hold to run</span>
         </div>
-        <div class="kgroup two">
-          <button class="key act" data-t="ccw" data-k="KeyZ"><kbd>Z</kbd><span>Turn ⟲</span></button>
-          <button class="key act" data-t="cw" data-k="KeyC"><kbd>C</kbd><span>Turn ⟳</span></button>
-          <button class="key act" id="gclose" data-k="KeyF"><kbd>F</kbd><span>Close</span></button>
-          <button class="key act" id="gopen" data-k="KeyR"><kbd>R</kbd><span>Open</span></button>
-        </div>
-      </div>
-      <div id="spacekey" class="spacekey" hidden><kbd>SPACE</kbd><span>hold to let the arm move</span></div>
-      <div class="row">
-        <div class="field"><label>Step</label><div class="seg" id="jogmm"><button data-v="1">1</button><button data-v="5" class="on">5</button><button data-v="20">20</button><button data-v="50">50</button><em>mm</em></div></div>
-        <div class="field"><label>Turn by</label><div class="seg" id="jogdeg"><button data-v="5">5</button><button data-v="15" class="on">15</button><button data-v="45">45</button><button data-v="90">90</button><em>°</em></div></div>
-      </div>
-      <div class="row"><button id="levelbtn" class="act">Point the gripper down</button><span id="tiltnote" class="note"></span></div>
 
-      <div class="head sep"><h2>Places</h2><button class="q" data-pop="h_places">?</button><span class="grow"></span>
-        <label class="mini" title="How far above the highest spot the arm travels between spots">Lift <input type="number" id="lift" value="80" min="30" max="200" step="5"> mm</label>
-        <button id="donebtn" class="go act">Done</button></div>
-      <div class="row">
-        <input type="text" id="spotname" value="A" size="5" maxlength="12" title="Name of this spot">
-        <button id="spotbtn" class="go act">Save spot here</button>
-        <div id="spots_edit" class="chips"></div>
-      </div>
-      <div class="row">
-        <button class="act" data-pop="h_table">Find the table…</button>
-        <button id="savedbtn" class="act" hidden></button><button id="demobtn" class="act" hidden>Use made-up spots</button>
-      </div>
+        <div id="p_teach" hidden>
+          <div class="section-heading"><h3>Position the gripper</h3><button class="q" data-pop="h_nudge" aria-label="Help with gripper controls">?</button></div><p class="muted">Move to a pickup or placement point, then save it below.</p>
+          <div class="keys">
+            <div class="kgroup" role="group" aria-label="Move gripper">
+              <button class="key act" data-j="up" data-k="KeyQ"><span class="key-direction">↑</span><span>Up</span><kbd>Q</kbd></button>
+              <button class="key act" data-j="fwd" data-k="KeyW"><span class="key-direction">↗</span><span>Forward</span><kbd>W</kbd></button>
+              <button class="key act" data-j="down" data-k="KeyE"><span class="key-direction">↓</span><span>Down</span><kbd>E</kbd></button>
+              <button class="key act" data-j="left" data-k="KeyA"><span class="key-direction">←</span><span>Left</span><kbd>A</kbd></button>
+              <button class="key act" data-j="back" data-k="KeyS"><span class="key-direction">↙</span><span>Back</span><kbd>S</kbd></button>
+              <button class="key act" data-j="right" data-k="KeyD"><span class="key-direction">→</span><span>Right</span><kbd>D</kbd></button>
+            </div>
+            <div class="kgroup two" role="group" aria-label="Turn and open gripper">
+              <button class="key act" data-t="ccw" data-k="KeyZ"><span class="key-direction">↶</span><span>Turn CCW</span><kbd>Z</kbd></button>
+              <button class="key act" data-t="cw" data-k="KeyC"><span class="key-direction">↷</span><span>Turn CW</span><kbd>C</kbd></button>
+              <button class="key act" id="gclose" data-k="KeyF"><span class="key-direction">→←</span><span>Close</span><kbd>F</kbd></button>
+              <button class="key act" id="gopen" data-k="KeyR"><span class="key-direction">←→</span><span>Open</span><kbd>R</kbd></button>
+            </div>
+          </div>
+          <div id="spacekey" class="spacekey" hidden><kbd>SPACE</kbd><span>Hold to allow motion · release to pause</span></div>
+          <div class="row adjustment-row">
+            <div class="field"><label id="jogmm-label">Move increment <span class="unit">mm</span></label><div class="seg" id="jogmm" role="group" aria-labelledby="jogmm-label"><button data-v="1">1</button><button data-v="5" class="on">5</button><button data-v="20">20</button><button data-v="50">50</button></div></div>
+            <div class="field"><label id="jogdeg-label">Turn increment <span class="unit">deg</span></label><div class="seg" id="jogdeg" role="group" aria-labelledby="jogdeg-label"><button data-v="5">5°</button><button data-v="15" class="on">15°</button><button data-v="45">45°</button><button data-v="90">90°</button></div></div>
+          </div>
+          <p id="jognote" class="note motion-note" role="status"></p><div class="level-row"><button id="levelbtn" class="act">Point gripper down</button><span id="tiltnote" class="note"></span></div>
+          <div class="section-heading sep"><h3>Save a spot</h3><button class="q" data-pop="h_places" aria-label="Help with teaching spots">?</button><span class="grow"></span><span class="eyebrow">Base coordinates</span></div>
+          <div class="row spot-row"><label class="field spot-name" for="spotname">Spot name<input type="text" id="spotname" value="A" maxlength="12" autocomplete="off"></label><button id="spotbtn" class="go act">Save spot here</button></div>
+          <div id="spots_edit" class="chips spots-list" aria-label="Saved spots"></div>
+          <div class="teaching-finish"><label class="mini col" title="How far above the highest spot the arm travels between spots">Travel lift <span class="input-unit"><input type="number" id="lift" value="80" min="30" max="200" step="5"><span>mm</span></span></label><button id="donebtn" class="go act">Finish teaching <span aria-hidden="true">→</span></button></div>
+          <details class="disclosure teaching-options"><summary>Other ways to set up spots</summary><div class="disclosure-content"><p class="muted">Restore a previous setup or find the table with a block.</p><div class="row"><button class="act" data-pop="h_table">Find the table…</button><button id="savedbtn" class="act" hidden></button><button id="demobtn" class="act" hidden>Use demo spots</button></div></div></details>
+        </div>
+
+        <div id="p_run" hidden>
+          <div class="run-preferences" role="group" aria-label="Run options">
+            <div class="run-preferences-heading"><span class="eyebrow">Run options</span><span id="run_mode" class="note"></span></div>
+            <label class="chk"><input type="checkbox" id="rehearse" checked><span>Rehearse in the air<small>Travel the route without picking up blocks.</small></span></label>
+            <label class="chk"><input type="checkbox" id="step" checked><span>One step at a time<small>Wait for Next step before each action.</small></span></label>
+          </div>
+          <div id="jobbox" class="run-monitor">
+            <div class="run-monitor-heading"><div><span class="eyebrow">Execution</span><h3 id="run_status">Ready for a task</h3></div><button id="nextbtn" class="go" hidden>Next step <span aria-hidden="true">→</span></button></div>
+            <p id="job_empty" class="muted">Choose a task below. The arm moves while the hold-to-run grip is held.</p><div id="outcome" class="note" role="status"></div><progress id="run_progress" value="0" max="100" aria-label="Task progress" hidden></progress><div id="run_step" class="note"></div>
+            <details id="step_details" class="disclosure"><summary>View every step</summary><ol id="steps"></ol></details>
+          </div>
+          <div class="tabs" role="tablist" aria-label="Assembly task"><button id="tab_blocks" class="on" role="tab" aria-selected="true" aria-controls="pane_blocks">Move a block</button><button id="tab_tower" role="tab" aria-selected="false" aria-controls="pane_tower" tabindex="-1">Tower</button><button id="tab_cam" role="tab" aria-selected="false" aria-controls="pane_cam" tabindex="-1">Camera</button></div>
+          <div id="pane_blocks" class="task-pane" role="tabpanel" aria-labelledby="tab_blocks">
+            <div class="task-heading"><h3>Move between spots</h3><p class="muted">Tell the arm where the block is and where it should go.</p></div>
+            <div class="route-fields"><label class="field">Pick up from<select id="thing" aria-label="Block source spot"></select></label><span class="route-arrow" aria-hidden="true">→</span><label class="field">Place at<select id="dst" aria-label="Block destination spot"></select></label></div>
+            <div class="task-actions"><label class="mini col count-field">Number of moves<input type="number" id="count" value="1" min="1" max="500"></label><button id="gobtn" class="go">Move block <span aria-hidden="true">→</span></button></div><p class="field-help">Choose Random destination to move between available spots.</p>
+          </div>
+          <div id="pane_tower" class="task-pane" role="tabpanel" aria-labelledby="tab_tower" hidden>
+            <div class="section-heading"><h3>Build &amp; take down</h3><button class="q" data-pop="h_tower" aria-label="Help with tower tasks">?</button></div><p class="muted">Place one block on each source spot. The tower uses the other spots in order.</p>
+            <div class="form-grid"><label class="field">Tower spot<select id="tw_on"></select></label><label class="field">Block height <span class="input-unit"><input type="number" id="tw_h" value="30" min="10" max="80" step="0.5"><span>mm</span></span></label><label class="field">Blocks on tower now<input type="number" id="tw_n" value="0" min="0" max="6"></label><label class="field">Build / take-down rounds<input type="number" id="tw_r" value="1" min="1" max="50"></label></div>
+            <div class="row tower-actions"><button id="tw_build" class="go">Build tower</button><button id="tw_down">Take down</button><button id="tw_loop">Build &amp; take down</button></div><div id="tw_note" class="note task-note"></div>
+          </div>
+          <div id="pane_cam" class="task-pane" role="tabpanel" aria-labelledby="tab_cam" hidden>
+            <div class="section-heading"><h3>Build from vision</h3><span class="eyebrow">Camera guided</span></div><div id="e_why" class="note task-note"></div>
+            <details class="disclosure camera-setup" open><summary>Camera calibration</summary><div class="disclosure-content"><div class="section-heading"><p class="muted">Calibrate after moving the camera or table.</p><button class="q" data-pop="h_show" aria-label="Help with camera calibration">?</button></div><div class="form-grid"><label class="field">Calibration block<select id="e_kind"></select></label><label class="field">Block is on spot<select id="e_source"></select></label><label class="field">Sample places<input type="number" id="e_n" value="12" min="8" max="20"></label></div><p class="field-help">Calibration physically carries the block between samples, including when Rehearse in the air is selected.</p><button id="e_show" class="full-width">Show camera the table</button></div></details>
+            <div class="row vision-actions"><button id="lookbtn">Look at the table</button><label class="field">Tower spot<select id="e_on"></select></label></div><div id="e_plan" class="note task-note"></div><div id="e_seen" class="chips detected-blocks"></div><button id="e_build" class="go full-width">Build from detected blocks <span aria-hidden="true">→</span></button>
+          </div>
+        </div>
+
+        <div class="pop" id="h_nudge" role="dialog" aria-labelledby="nudge-help-title" tabindex="-1"><div class="section-heading"><h3 id="nudge-help-title">Moving the gripper</h3><button class="pop-close" aria-label="Close help">×</button></div><p>Hold the grip while giving a command. W / S move away from and towards the base, A / D move left and right, and Q / E move up and down along the gripper’s axis. Z / C turn the gripper; F / R close and open it.</p><p>Each press moves by the selected increment. Start with 1 mm near the table. In a stand-in session, hold the space bar instead of the grip.</p></div>
+        <div class="pop" id="h_places" role="dialog" aria-labelledby="places-help-title" tabindex="-1"><div class="section-heading"><h3 id="places-help-title">Teaching spots</h3><button class="pop-close" aria-label="Close help">×</button></div><p>Stand a block at a pickup or placement point. Nudge the open gripper around it, with the fingertips a few millimetres above the table, then save the spot. Repeat for the other spots and choose Finish teaching.</p><p>A spot remembers the gripper's rotation. Keep the same tilt at every spot. Travel lift is the clearance above the highest spot when moving between them.</p></div>
+        <div class="pop" id="h_table" role="dialog" aria-labelledby="table-help-title" tabindex="-1"><div class="section-heading"><h3 id="table-help-title">Find the table</h3><button class="pop-close" aria-label="Close table setup">×</button></div><p>Point the gripper straight down above the centre of the work area. Hold a green or blue bar level between the open jaws, with the jaws across its short side, and close the gripper.</p><div class="form-grid"><label class="field">Area width <span class="input-unit"><input type="number" id="ft_w" value="200" min="100" max="400" step="10"><span>mm</span></span></label><label class="field">Area depth <span class="input-unit"><input type="number" id="ft_d" value="140" min="100" max="400" step="10"><span>mm</span></span></label></div><div class="row"><button id="ftbtn" class="go act">Find the table</button><button id="fthere" class="act">Gripper is at the table</button></div><p>Find the table lowers the bar slowly until it meets the mat, releases it, and creates the spots. Hold the grip throughout; release it if the arm visibly pushes into the table. The tower spot is where the bar lands.</p><p>If the fingertips are already on the mat, choose Gripper is at the table: the bar is released there without lowering.</p></div>
+        <div class="pop" id="h_tower" role="dialog" aria-labelledby="tower-help-title" tabindex="-1"><div class="section-heading"><h3 id="tower-help-title">Building a tower</h3><button class="pop-close" aria-label="Close help">×</button></div><p>Stand one block on every spot except the tower spot. Choose that spot, enter the block height, and choose Build tower. The first block goes to the taught height; each next block goes one block height higher and is released just above the one below.</p><p>Take down returns each block to its original spot, top first. Build &amp; take down repeats this for the chosen number of rounds.</p><p>Start with Rehearse in the air and One step at a time enabled. Rehearsal follows the travel route without coming down to the blocks.</p></div>
+        <div class="pop" id="h_show" role="dialog" aria-labelledby="camera-help-title" tabindex="-1"><div class="section-heading"><h3 id="camera-help-title">Calibrating the camera</h3><button class="pop-close" aria-label="Close help">×</button></div><p>Teach spots at opposite corners of the work area. Lay one bar or slab flat on a taught spot with the jaws across its short side. Select the block and its source spot in Camera calibration.</p><p>Keep everything else off the mat. Hold the grip while the arm carries the block to each sample position and steps aside for a picture. Repeat calibration whenever the camera or table moves. For detection, blocks must lie apart on the grey mat.</p></div>
+      </section>
     </div>
 
-    <div id="p_run" hidden>
-      <div class="head">
-        <div class="tabs"><button id="tab_blocks" class="on">Blocks</button><button id="tab_cam">Camera</button></div>
-        <span class="grow"></span>
-        <label class="chk"><input type="checkbox" id="rehearse" checked> rehearse in the air</label>
-        <label class="chk"><input type="checkbox" id="step" checked> one step at a time</label>
-      </div>
-
-      <div id="pane_blocks">
-        <h3>One block</h3>
-        <div class="row">
-          <label class="mini col">Stands on<select id="thing"></select></label>
-          <label class="mini col">Put it on<select id="dst"></select></label>
-          <label class="mini col tiny">Moves<input type="number" id="count" value="1" min="1" max="500"></label>
-          <button id="gobtn" class="go">Go</button>
-        </div>
-        <h3>A tower <button class="q" data-pop="h_tower">?</button></h3>
-        <div class="row">
-          <label class="mini col">Stands on<select id="tw_on"></select></label>
-          <label class="mini col narrow">Block height<input type="number" id="tw_h" value="30" min="10" max="80" step="0.5"></label>
-          <label class="mini col narrow">On it now<input type="number" id="tw_n" value="0" min="0" max="6"></label>
-          <label class="mini col narrow">Rounds<input type="number" id="tw_r" value="1" min="1" max="50"></label>
-        </div>
-        <div class="row"><button id="tw_build" class="go">Build</button><button id="tw_down">Take down</button><button id="tw_loop">Build and take down, for the rounds</button></div>
-        <div id="tw_note" class="note clamp"></div>
-      </div>
-
-      <div id="pane_cam" hidden>
-        <div id="e_why" class="note"></div>
-        <div class="row">
-          <button id="lookbtn">Look</button>
-          <label class="mini col">Tower stands on<select id="e_on"></select></label>
-          <button id="e_build" class="go">Build a tower from what it sees</button>
-        </div>
-        <div id="e_plan" class="note clamp"></div>
-        <div id="e_seen" class="chips"></div>
-        <h3>Show the camera the table <button class="q" data-pop="h_show">?</button></h3>
-        <div class="row">
-          <label class="mini col">With this block<select id="e_kind"></select></label>
-          <label class="mini col narrow">Places<input type="number" id="e_n" value="12" min="8" max="20"></label>
-          <button id="e_show">Show the camera the table</button>
-        </div>
-      </div>
-
-      <div id="jobbox">
-        <div class="head sep"><div id="outcome" class="note"></div><span class="grow"></span><button id="nextbtn" class="go">Next step</button></div>
-        <ol id="steps"></ol>
-      </div>
+    <div class="col right">
+      <section class="card workspace-panel" aria-labelledby="view-title">
+        <div class="panel-heading"><div><span class="eyebrow">Observe</span><h2 id="view-title">Robot view</h2></div><div id="v_views" class="seg small" role="group" aria-label="Robot view angle"><button data-view="iso" class="on" aria-pressed="true">3D</button><button data-view="front" aria-pressed="false">Front</button><button data-view="side" aria-pressed="false">Side</button><button data-view="top" aria-pressed="false">Top</button></div></div>
+        <div id="view" class="stage"><canvas id="gl" aria-label="3D model of the robot; drag to orbit and scroll to zoom"></canvas><div id="v_labels"></div><div class="over tl"><span id="v_arm" class="tag strong"></span></div><span class="view-instruction">Drag to orbit · scroll to zoom</span><div class="over bl" id="v_caption"></div><div class="over br legend" id="v_legend"></div><div id="v_fail" class="empty" hidden></div></div>
+        <div class="telemetry" aria-label="Robot telemetry"><span id="v_err" class="tag"></span><span id="v_h" class="tag"></span><span id="v_lag" class="tag"></span><span id="v_mov" class="tag"></span><span id="v_read" class="tag bad" hidden></span></div>
+      </section>
+      <section id="cams" class="card camera-panel" aria-labelledby="cams-title"><div class="panel-heading"><div><span class="eyebrow">Live feeds</span><h2 id="cams-title">Cameras</h2></div><span id="cams-status" class="note">Select a feed to expand</span></div><div class="camera-content"><div id="camgrid"></div><div id="cam_none" class="empty" hidden></div></div></section>
     </div>
-
-    <!-- small sheets that open over this card -->
-    <div class="pop" id="h_nudge"><h3>Nudging</h3><p>Forward is away from the robot's base. Up and down follow the gripper's own axis, so it should point at the table. Turning spins the gripper in place (only its last joint moves). Every nudge is slow and ends by itself if something is in the way.</p><p>Tilting the gripper down keeps the flange in place and swings the fingertips sideways: keep the space around the gripper free.</p></div>
-    <div class="pop" id="h_places"><h3>Showing it the places</h3><p>Stand a block where it should be picked up, nudge the open gripper around it (fingertips a few millimetres above the table) and press "Save spot here". Do the same for every other place, then press Done. A spot remembers how the gripper was turned there. The tilt of the gripper must be the same at every spot.</p><p>The lift is how far above the highest spot the arm travels between spots.</p></div>
-    <div class="pop" id="h_table"><h3>Find the table by itself</h3>
-      <div class="row">
-        <label class="mini col">Area across (mm)<input type="number" id="ft_w" value="200" min="100" max="400" step="10"></label>
-        <label class="mini col">Area deep (mm)<input type="number" id="ft_d" value="140" min="100" max="400" step="10"></label>
-      </div>
-      <div class="row"><button id="ftbtn" class="go act">Find the table</button><button id="fthere" class="act">The gripper is at the table now</button></div>
-      <p>Instead of teaching spots by hand. Bring the gripper over the middle of the area the blocks will lie in, pointing straight down. Hold a green or blue bar between the open jaws by its ends, lying level, the jaws across its short side, and press Close. Then press Find the table and hold the grip: the gripper comes straight down slowly until the bar meets the mat, lets go, and the label reads ARMED. Let go of the grip if it visibly pushes into the table. The tower will stand where the bar was put down.</p>
-      <p>If you have already brought the fingertips down onto the mat yourself, press "The gripper is at the table now" instead: nothing comes down, the bar is let go there.</p></div>
-    <div class="pop" id="h_tower"><h3>A tower</h3><p>Stand one block on every spot except the one the tower goes on, choose that spot, enter the block height and press Build. The first block goes down at the taught height and each next one a block height higher, let go a little above the block below. Take down returns every block to its own spot, top first.</p><p>Start with both boxes ticked: "rehearse in the air" does the whole travel without coming down, and "one step at a time" waits for Next step before every step.</p></div>
-    <div class="pop" id="h_show"><h3>Show the camera the table</h3><p>Once, and again whenever the camera or the table was moved. Teach spots at opposite corners of the area the blocks will lie in. Lay ONE bar or slab flat on a spot, jaws across its short side, say under "Stands on" (Blocks) which spot that is, and keep everything else off the mat. The arm carries the block to each place and steps aside for a picture; hold the grip throughout. Blocks must lie on the grey mat and must not touch each other.</p></div>
-  </section>
-</div>
-
-<div class="col right">
-  <section id="view" class="card stage">
-    <canvas id="gl"></canvas>
-    <div id="v_labels"></div>
-    <div class="over tl"><span id="v_arm" class="tag strong"></span><span id="v_err" class="tag"></span><span id="v_h" class="tag"></span><span id="v_lag" class="tag"></span><span id="v_mov" class="tag"></span><span id="v_read" class="tag bad" hidden></span></div>
-    <div class="over tr seg small" id="v_views"><button data-view="iso" class="on">3D</button><button data-view="front">Front</button><button data-view="side">Side</button><button data-view="top">Top</button></div>
-    <div class="over bl" id="v_caption"></div>
-    <div class="over br legend" id="v_legend"></div>
-    <div id="v_fail" class="empty" hidden></div>
-  </section>
-
-  <section id="cams" class="card">
-    <div id="camgrid"></div>
-    <div id="cam_none" class="empty" hidden></div>
-  </section>
-</div>
-</main>
-
-<footer>
-  <button id="logbtn" title="Show the whole log">Log</button>
-  <div id="logline"></div>
-  <a href="/classic" title="The older page: one long column, no model, no live pictures">classic page</a>
-</footer>
-<div id="logdrawer" hidden><pre id="log"></pre></div>
-
-<script>window.TOKEN = "__TOKEN__";</script>
-<script src="/web/app.js"></script>
-</body></html>
+  </main>
+  <footer><button id="logbtn" aria-expanded="false" aria-controls="logdrawer"><span aria-hidden="true">≡</span> Activity log</button><div id="logline"></div><a href="/classic" title="The original dashboard with the same controls">Classic dashboard <span aria-hidden="true">↗</span></a></footer>
+  <div id="logdrawer" hidden><div class="section-heading"><h2>Session activity</h2><span class="note">Escape to close</span></div><pre id="log"></pre></div>
+  <script>window.TOKEN = "__TOKEN__";</script><script src="/web/app.js"></script>
+</body>
+</html>
