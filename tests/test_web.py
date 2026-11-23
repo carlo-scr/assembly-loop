@@ -70,7 +70,7 @@ def cams(tmp_path):
 def ses(tmp_path, cams):
     s = Session({"right": dict(label="Right arm", ip="192.0.2.1", make=FakeArm, down=mount_down("right")), "stand-in": dict(label="Stand-in arm (no robot)", ip=None, make=FakeArm)},
                 spots_path=tmp_path / "spots.json", log_dir=tmp_path / "logs", probe=lambda ip: False, fake_speed=40.0, guard_kw=dict(poll_s=0.002), limit_kw=dict(settle_s=0.0),
-                camera_path=tmp_path / "camera.json", blocks_path=tmp_path / "blocks.json", feeds=cams)
+                camera_path=tmp_path / "camera.json", blocks_path=tmp_path / "blocks.json", feeds=cams, record=False)  # these tests count who opens which camera: the recorder would open them too
     s.alive, s.pressed = True, False
 
     def grip():

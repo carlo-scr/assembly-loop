@@ -9,10 +9,13 @@ grip of a Quest controller.
 Today it moves wooden blocks between places taught by hand and stacks them into a tower. Press-fit bricks and cables
 are meant to follow on the same base.
 
-> **Status, 21 November 2026.** Everything here is tested on a stand-in arm (62 tests). On the real right arm, a session,
+> **Status, 23 November 2026.** Everything here is tested on a stand-in arm. On the real right arm, a session,
 > the Quest grip and nudging have run; moving blocks, towers and the camera have not. The first session on the arm
 > follows the rungs below, one at a time. The page that fits one screen (the model of the arm, the live pictures) has
 > run on the stand-in arm only: its cameras have not been opened on the rig yet. The older page is kept at `/classic`.
+> **New on 23 November, all of it on the stand-in arm and drawn pictures only:** a tower built with a look after every
+> block, pushing blocks apart, recorded episodes and their export, the two arms fitted to each other and the other
+> arm watched. What was found on the way and what comes next is in [docs/AUDIT.md](docs/AUDIT.md).
 
 ## Run it
 
@@ -81,9 +84,11 @@ Good to know:
 - **The Quest app finds this computer by itself** while a session is running: it is listed as
   "<computer name> (assembly-loop)". The headset must be on the arm's network (the "swoosh" Wi-Fi on this rig).
 
-A session writes `assembly_logs/guard.jsonl` (everything the arm was asked to do, and why each move ended),
-`assembly_logs/moves.jsonl` (one line per block moved) and `spots.json` (the taught places). None of these are
-tracked by git.
+A session writes, under `assembly_logs/<date_time>/`, `guard.jsonl` (everything the arm was asked to do, and why each
+move ended), `moves.jsonl` (one line per block moved) and `looks/` (every picture the block finder was given, and what
+it made of it); under `assembly_logs/episodes/` one folder per recorded job (see "Recording"); and next to the program
+`spots.json` and `spots.<arm>.json` (the taught places, per arm), `camera.json` and `camera.<arm>.json` (the camera's
+fit) and `rig.json` (how the two arms stand to each other). None of these are tracked by git.
 
 ## What keeps the arm safe
 
@@ -97,6 +102,13 @@ tracked by git.
   where they were told to be. A move that meets something ends by itself.
 - **Faults end the session.** A controller error, or a free move that ends up off its plan, stops the arm and the
   session stays stopped. The program never clears a controller error and never changes controller settings.
+- **One headset.** The first headset heard is the switch until the session ends. Frames from any other sender, and
+  frames without a running number, do not count.
+- **The other arm.** Once the arms are fitted to each other (below) and the other arm answers, it is read (never
+  enabled, never moved) and this arm starts no segment that could bring the two within 60 mm, takes shorter segments
+  near it, and stops and ends the session if they are ever closer than that. An other arm that cannot be read counts
+  as too close. Until the arms are fitted nothing is known about the other arm: the log says "NOT watched", and a
+  person keeps it out of the way.
 - **The page is local.** It answers on 127.0.0.1 only, and every button needs a token that only the served page has.
 
 The red emergency stop stays within reach the whole time. Hold-to-run is not a substitute for it.
@@ -164,9 +176,75 @@ It needs OpenCV: `pip install -e ".[real,eyes]"` (with uv: `uv pip install -e ".
    down the way it lay; tall blocks are held near their top.
 
 What it does not do yet: blocks of one colour that touch are one patch and are not made out; a lying cylinder is left
-out (it rolls); a block is never turned over; the tower and the travel above it stay under 300 mm; it does not check
-that the jaws have room beside a block (the lowering is watched for contact, as always). `python -m assemblyloop look`
-takes one picture and writes `look.jpg` with what the camera makes out, without any arm.
+out (it rolls); a block is never turned over; the tower and the travel above it stay under 300 mm; "Build a tower from what it sees" does
+not check that the jaws have room beside a block (the build with a look after every block does). `python -m assemblyloop look`
+takes one picture and writes `look.jpg` with what the camera makes out, without any arm; `python -m assemblyloop look
+--again assembly_logs` reads every picture the sessions kept once more and says where the block finder now sees
+something else than it did then (the way to try a change to it on real pictures).
+
+## A tower with a look after every block (the Loop tab)
+
+**Stand-in arm and drawn pictures only so far.** "Build a tower from what it sees" above plans every block from one
+picture and never looks again. "Build, looking after every block" lets the arm step aside after every block (above the
+taught spot farthest from the tower), and the next picture decides what happens next:
+
+- **Is the last block where it was put?** Its outline is drawn at the height it should stand at and fitted to its
+  colour. Found: the next block is aimed half way between where it really stands and the tower's own axis. Not found:
+  it fell, and is taken again from wherever it lies now. A tower whose top stands more than 30 mm off its foot ends
+  the job.
+- **Which block next?** Planned anew from every picture, so blocks may be added, moved or taken away while it runs.
+- **Can the jaws get at it?** The jaws open only 10 mm wider than the block on either side. A block with another
+  one where a finger would come down is first pushed clear with the closed gripper; a patch of colour that is not
+  made out as a block (two that touch, one half hidden) is pushed apart, from another side at every attempt. A push
+  is watched like a lowering: 3 mm at a time, and it ends where something does not slide. "push apart" unticked: such
+  blocks are left and said.
+- **Is it the block the camera named?** The gripper says how far apart its jaws stopped; more than 6 mm from the
+  block's width and it is let go again where it stood. If the gripper's counts turn out not to be tenths of a
+  millimetre on this rig (rung 7 says), untick "check widths".
+- Three failures in a row end the job and ask for a person. That is not a fault: the session stays ARMED.
+
+"Build and spread, for the rounds" is for collecting data: after every tower the blocks are taken down and laid at
+places and angles picked at random inside the area the camera was shown, and the next tower starts from there.
+
+## Recording (the Loop tab)
+
+While a job runs, ten times a second: every arm's joints, pose and gripper as its controller publishes them, what it
+was last asked for (the segment's goal, the gripper's opening), whether the switch is held, the step and the sub-task
+in words, and the newest picture of every camera of the arm (the cameras are opened for the recording even when the
+page shows none). One job is one episode in `assembly_logs/episodes/<date_time>_<n>/`: `episode.json` (the task in
+words, how it ended), `rows.jsonl`, `events.jsonl` (steps, sub-tasks, what the camera saw, pushes, blocks that fell)
+and `cam/<camera>/*.jpg`. A rehearsal in the air is never marked a success. "last episode: good / bad" is a person's
+word on it, which counts for more than "the steps ran". `--no_record` records nothing; `--record_hz` sets the rate.
+
+```
+python -m assemblyloop export assembly_logs out/blocks --npz              # one .npz per episode, numpy only
+pip install -e ".[export]"                                                # LeRobot (brings torch; Python 3.12 or newer)
+python -m assemblyloop export assembly_logs out/blocks you/assembly_blocks
+```
+
+The state is each arm's seven joint angles in radians and its gripper's opening from 0 to 1 (right arm first); the
+action is the same one row later, with the gripper as it was asked for; rows in which nothing moves are cut. The
+LeRobot path has run against lerobot 0.7.0 (dataset format v3.0). openpi pins an older LeRobot (format v2.1): for
+pi0.5, run the export inside openpi's own environment; that path is written from its source and has not been run.
+
+## Two arms
+
+**Stand-in arms only so far.** The arms are fitted to each other from marks on the table that both have touched:
+
+1. Stick five or more marks on the mat, spread out, where both arms reach.
+2. With the right arm: point the gripper down, nudge the fingertips onto each mark and save it as a spot (M1, M2, ...).
+   Press Done. With the left arm, in its own session: the same marks under the same names.
+3. On the Loop tab press "Fit the arms to each other" (or `python -m assemblyloop pair`). A mark that does not agree
+   with the others is named; a fit that disagrees with how the arms are mounted is refused. It is kept in `rig.json`.
+
+From then on a session on either arm watches the other one (see "What keeps the arm safe"), and the left arm needs
+no teaching of its own: in a session on it, nudge it over the area and press "Use the other arm's spots". The right
+arm's spots and the camera's fit are carried over into the left arm's frame. **Rehearse in the air first**: nothing
+checks that the left arm can reach every place, and the carried-over heights are only as good as the fit. Both
+grippers must be the same length, and neither controller may have a tool offset set.
+
+What this is not yet: both arms moving in one session. One program still has one arm; the other is seen and kept
+away from. See [docs/AUDIT.md](docs/AUDIT.md) for the rungs towards two arms working on one tower.
 
 ## Layout
 
@@ -181,6 +259,10 @@ assemblyloop/
   eyes.py       the camera: coloured patches, the camera fitted to the table, which block each patch is
   sight.py      the camera in a session: show it the table, look, build a tower from what it sees
   plate.py      a stud plate taught from three poses (press-fit bricks; command line only for now)
+  closed.py     a tower with a look after every block: is it there, which next, can the jaws get at it; pushing; spreading
+  record.py     what the robot did and what the cameras saw while a job ran, as episodes
+  export.py     episodes as a LeRobot dataset, or as .npz
+  pair.py       two arms: fitted to each other from marks, what one knows carried over to the other, how near they are
   session.py    one session: OFF, DISARMED, AWAITING CALIBRATION, ARMED, RUNNING
   feeds.py      the live pictures: one owner per camera, lent to the block finder for its own picture
   dashboard.py  the local web server of a session, and the older page

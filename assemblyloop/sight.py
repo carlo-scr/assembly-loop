@@ -15,6 +15,7 @@ are, and the guard's box is the one around the taught spots and those blocks.
 from __future__ import annotations
 
 import copy
+import json
 import threading
 import time
 from pathlib import Path
@@ -48,11 +49,14 @@ class Sight:
             self.camera = eyes.V4L2()
         if not self._setup_read:
             self._setup_read = True
-            if self.camera_path.exists():
-                try:
-                    self.setup = eyes.Setup.load(self.camera_path)
-                except (OSError, ValueError, KeyError, TypeError):
-                    self.say(f"{self.camera_path} is not readable: show the camera the table again")
+            mine = self._file(self.camera_path) if hasattr(self, "_file") else self.camera_path  # this arm's own file first
+            for path in dict.fromkeys((mine, self.camera_path)):
+                if path.exists():
+                    try:
+                        self.setup = eyes.Setup.load(path)
+                        break
+                    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+                        self.say(f"{path} is not readable: show the camera the table again")
         return eyes
 
     def _grab(self):
@@ -63,6 +67,17 @@ class Sight:
             return self.camera.grab()
         with feeds.borrow(getattr(self.camera, "device", None)):
             return self.camera.grab()
+
+    def _keep_setup(self, setup):
+        """Save the camera's fit under its arm's own name, and under the plain name unless that holds another arm's."""
+        eyes = self._eyes()
+        setup.save(self._file(self.camera_path, setup.side))
+        try:
+            other = eyes.Setup.load(self.camera_path).side if self.camera_path.exists() else setup.side
+        except Exception:  # noqa: BLE001
+            other = setup.side
+        if other == setup.side:
+            setup.save(self.camera_path)
 
     def catalogue(self):
         if not self.blocks_path.exists():
@@ -85,22 +100,57 @@ class Sight:
         with self.lock:
             if self.worker is not None:
                 raise Refused("look when the arm has finished")
-            eyes, cat = self._eyes(), self.catalogue()
+            self._eyes()
+            cat = self.catalogue()
             if self.setup is None:
                 raise Refused("the camera has not been shown the table yet")
             setup = self.setup
-        im = self._grab()
+        return self._see(self._grab(), setup, cat)
+
+    def _see(self, im, setup, cat, hide=None):
+        """What the block finder makes of one picture. `hide`: a mask of what it must not look at (a tower that
+        stands on the table). The picture and what was made of it are kept in the session's folder, so that every
+        look that went wrong can be looked at again later (`python -m assemblyloop look --again <folder>`)."""
+        eyes = self._eyes()
         tall = max(r.height for k in cat.kinds for r in k.rests())
-        seen, unknown, blobs = eyes.look(im, setup.camera, setup.table, cat, setup.region((im.shape[1], im.shape[0]), tall))
+        region = setup.region((im.shape[1], im.shape[0]), tall)
+        seen, unknown, blobs = eyes.look(im, setup.camera, setup.table, cat, region)
+        if hide is not None:  # what shows mostly where the tower shows IS the tower, not a block on the table behind it
+            cam = setup.camera.scaled((im.shape[1], im.shape[0]))
+
+            def hidden(s):
+                m = eyes.np.zeros(hide.shape, eyes.np.uint8)
+                eyes.cv2.fillConvexPoly(m, eyes.np.round(eyes.outline(cam, eyes.solid(s.rest, setup.table, s.uv[0], s.uv[1], s.angle, s.kind.shape))).astype(eyes.np.int32), 1)
+                return float((m.astype(bool) & hide).sum()) > 0.4 * max(int(m.sum()), 1)
+
+            seen = eyes.name_all([s for s in seen if not hidden(s)])
+            unknown = [(b, why) for b, why in unknown if float((b.mask & hide[b.y0:b.y0 + b.mask.shape[0], b.x0:b.x0 + b.mask.shape[1]]).sum()) <= 0.4 * b.area]
         outside = [s for s in seen if not setup.inside(s.uv)]
         seen = [s for s in seen if setup.inside(s.uv)]
         ok, jpg = eyes.cv2.imencode(".jpg", eyes.draw(im, blobs, seen, unknown, setup.camera, setup.table), [eyes.cv2.IMWRITE_JPEG_QUALITY, 80])
+        sight = dict(t=time.time(), seen=seen, unknown=[why for _, why in unknown] + [f"{s.name}: outside the part of the table the camera was shown" for s in outside],
+                     odd=list(unknown), jpg=jpg.tobytes() if ok else b"", stale=False)
         with self.lock:
-            self.sight = dict(t=time.time(), seen=seen, unknown=[why for _, why in unknown] + [f"{s.name}: outside the part of the table the camera was shown" for s in outside],
-                              jpg=jpg.tobytes() if ok else b"", stale=False)
+            self.sight = sight
             self.say(f"the camera sees {len(seen)} block{'' if len(seen) == 1 else 's'}" + (f": {', '.join(s.name for s in seen)}" if seen else "")
-                     + (f"; {len(self.sight['unknown'])} thing{'' if len(self.sight['unknown']) == 1 else 's'} not made out" if self.sight["unknown"] else ""))
-        return self.sight
+                     + (f"; {len(sight['unknown'])} thing{'' if len(sight['unknown']) == 1 else 's'} not made out" if sight["unknown"] else ""))
+        self._keep_look(im, sight)
+        return sight
+
+    def _keep_look(self, im, sight):
+        """Keep the picture as the camera gave it and what was made of it. Never in the way of the look itself."""
+        folder = getattr(self, "log_dir", None)
+        if folder is None or not getattr(self, "keep_looks", True):
+            return
+        try:
+            eyes, folder = self._eyes(), Path(folder) / "looks"
+            folder.mkdir(parents=True, exist_ok=True)
+            stem = f"{time.strftime('%H%M%S')}_{int(sight['t'] * 1000) % 1000:03d}"
+            eyes.cv2.imwrite(str(folder / f"{stem}.jpg"), im, [eyes.cv2.IMWRITE_JPEG_QUALITY, 92])
+            (folder / f"{stem}.json").write_text(json.dumps(dict(t=sight["t"], unknown=sight["unknown"], seen=[
+                dict(name=b.name, kind=b.kind.name, lies=b.rest.name, uv=[float(v) for v in b.uv], angle=float(b.angle), fit=float(b.score)) for b in sight["seen"]]), indent=1))
+        except Exception as e:  # noqa: BLE001  a full disk must not stop the camera
+            self.say(f"the picture was not kept: {type(e).__name__}: {e}")
 
     def sight_jpg(self):
         return (self.sight or {}).get("jpg") or b""
@@ -173,7 +223,7 @@ class Sight:
             def finish():
                 setup, line = eyes.settle([p for p, _ in shots], [im for _, im in shots], block, axes, sp.turn(home),
                                           extra_uv=[tuple((axes.T @ p)[:2]) for p in self.spots.at.values()], side=self.chosen)
-                setup.save(self.camera_path)
+                self._keep_setup(setup)
                 with self.lock:
                     self.setup, self.sight, self.thing_at = setup, None, home
                 self.say(f"{line}. Kept in {self.camera_path}")
@@ -182,7 +232,7 @@ class Sight:
             legs = [dict(src=a, dst=b, su=0.0, du=0.0, text=f"the block to {b}", first=(lambda a=a: photo(a)) if i == 0 else None, then=(lambda b=b: photo(b)) if b != home else None)
                     for i, (a, b) in enumerate(zip(stops, stops[1:]))]
             self.job = dict(steps=[], i=None, waiting=False, outcome=None, done=0, total=len(legs), src=legs[0]["src"], dst=legs[0]["dst"], rehearse=False, step=bool(step),
-                            fixed=None, kind="move", legs=legs, spots=sp, text=legs[0]["text"], finish=finish)
+                            fixed=None, kind="move", legs=legs, spots=sp, text=legs[0]["text"], finish=finish, task="carry the block from place to place on the table")
             self.stack = None
             self.say(f"showing the camera the table: the {block.name} goes to {len(names)} places. Keep everything else off the mat")
             self._next.clear()
@@ -224,7 +274,7 @@ class Sight:
             self.stack, self.thing_at = dict(on=on, block_mm=None, n=0, of=len(levels), feeds=[leg["src"] for leg in legs]), None
             s["stale"] = True
             self.job = dict(steps=[], i=None, waiting=False, outcome=None, done=0, total=len(legs), src=legs[0]["src"], dst=on, rehearse=bool(rehearse), step=bool(step),
-                            fixed=None, kind="move", legs=legs, spots=sp, text=legs[0]["text"], tower=True)
+                            fixed=None, kind="move", legs=legs, spots=sp, text=legs[0]["text"], tower=True, task="stack the blocks into a tower")
             self.say(f"a tower of {len(levels)} on {on}, {levels[-1]['top_mm']:.0f} mm high: " + ", ".join(lv["block"].name for lv in levels))
             self._next.clear()
             self.worker = threading.Thread(target=self._work, daemon=True)

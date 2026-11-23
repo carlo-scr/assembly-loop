@@ -318,6 +318,17 @@ def make_server(session, port=8777):
             session.show_table(str(b.get("kind")), b.get("n", 12), bool(b.get("step")))
         elif path == "/api/build_seen":
             session.build_seen(str(b.get("on")), bool(b.get("rehearse")), bool(b.get("step")))
+        elif path == "/api/build_watched":
+            session.check_width = bool(b.get("width", True))
+            session.build_watched(str(b.get("on")), b.get("aside") or None, bool(b.get("push", True)), bool(b.get("step")), b.get("rounds", 1), bool(b.get("scatter")))
+        elif path == "/api/scatter":
+            session.scatter(str(b.get("on")), b.get("aside") or None, bool(b.get("step")))
+        elif path == "/api/record":
+            session.set_recording(bool(b.get("on")))
+        elif path == "/api/judge":
+            session.judge(bool(b.get("good")))
+        elif path == "/api/pair":
+            dict(fit=session.pair_fit, use=session.use_other)[str(b.get("do"))]()
         elif path == "/api/hold":
             if session.hold != "page":
                 raise Refused("with this arm the only hold-to-run switch is the Quest grip")
@@ -381,7 +392,7 @@ def make_server(session, port=8777):
 
         def do_POST(self):
             try:  # the body is read whatever happens next: the connection stays open for the next request
-                raw = self.rfile.read(min(int(self.headers.get("Content-Length") or 0), 1 << 20))
+                raw = self.rfile.read(max(0, min(int(self.headers.get("Content-Length") or 0), 1 << 20)))
             except ValueError:
                 raw = b""
             if not self._local() or not self._token():
@@ -392,7 +403,7 @@ def make_server(session, port=8777):
                     raise ValueError("the request is not an object")
                 if not act(self.path, body):
                     return self._send(dict(error="not found"), HTTPStatus.NOT_FOUND)
-            except (Refused, Released, ArmFault, KeyError, ValueError, TypeError) as e:
+            except (Refused, Released, ArmFault, KeyError, ValueError, TypeError, ArithmeticError) as e:
                 return self._send(dict(error=f"{e}"), HTTPStatus.CONFLICT)
             return self._send(dict(ok=True))
 

@@ -98,7 +98,7 @@ function render(s) {
 
   // ---- moving blocks
   const names = c.done ? c.spots.map(x => x.name) : [];
-  once("names", names, () => { options($("thing"), names, [["", "— say where —"]]); options($("dst"), names, [["", "a spot picked at random"]]); options($("tw_on"), names, [["", "— which spot —"]]); options($("e_on"), names, [["", "— which spot —"]]); lastThing = undefined; });
+  once("names", names, () => { options($("thing"), names, [["", "— say where —"]]); options($("dst"), names, [["", "a spot picked at random"]]); options($("tw_on"), names, [["", "— which spot —"]]); options($("e_on"), names, [["", "— which spot —"]]); options($("w_on"), names, [["", "— which spot —"]]); lastThing = undefined; });
   const st = s.stack, nNow = st ? st.n : undefined; if (nNow !== lastN) { lastN = nNow; if (st) { $("tw_n").value = st.n == null ? "" : st.n; $("tw_on").value = st.on; } }
   const on = $("tw_on").value, feeds = names.filter(n => n !== on).slice(0, 6); ["tw_build", "tw_down", "tw_loop"].forEach(id => { $(id).disabled = ph !== "ARMED"; });
   const note = !c.done ? "" : (!on ? "Choose the spot the tower stands on. One block stands on every other spot." : `One block stands on each of ${feeds.join(", ")}. They go onto ${on} in that order: the first at the taught height, each next one a block height higher, let go ${s.drop_mm} mm above the one below.`) + (st && st.n == null ? " The last run did not end as planned: say how many blocks stand on the tower now." : "");
@@ -114,6 +114,14 @@ function render(s) {
   once("bars", e.bars || [], () => options($("e_kind"), e.bars || [], []));
   $("lookbtn").disabled = !e.shown || busy; $("e_show").disabled = ph !== "ARMED" || !(e.bars || []).length;
   $("e_build").disabled = !(ph === "ARMED" && e.ready && g && !g.stale && g.order.length);
+  const canWatch = ph === "ARMED" && e.ready && !!$("w_on").value, r = s.rec || {}, pr = s.pair || {};
+  $("w_why").textContent = e.ready ? "The camera looks again after every block. Lay the blocks anywhere on the mat it was shown." : (e.why ? e.why.charAt(0).toUpperCase() + e.why.slice(1) + "." : "");
+  $("w_build").disabled = $("w_collect").disabled = !canWatch; $("w_scatter").disabled = !(canWatch && s.stack && s.stack.n > 0);
+  if (document.activeElement !== $("rec_on")) $("rec_on").checked = !!r.on;
+  $("rec_note").textContent = r.active ? `recording ${r.episode}: ${r.rows} rows, ${r.pictures} pictures` + (r.dropped ? `, ${r.dropped} dropped` : "") : (r.last && r.last.id ? `last: ${r.last.id}` : "");
+  $("rec_good").disabled = $("rec_bad").disabled = !!r.active || !(r.last && r.last.id);
+  $("pair_note").textContent = pr.watched ? (pr.mm != null ? `Other arm ${pr.mm} mm away (${pr.part})` : `Other arm NOT READABLE: ${pr.why}`) : (pr.fitted ? "Other arm not watched" : "Arms not fitted to each other");
+  $("pair_use").disabled = !(ph === "AWAITING CALIBRATION" && pr.fitted);
   once("seen", g ? [g.t, g.stale] : null, () => { $("e_seen").replaceChildren(...(g ? g.seen.map(b => chip("✓", "y", b.name, `${b.lies}, fits ${b.fit}%`)).concat(g.unknown.map(w => chip("?", "n", "not made out", w))) : [])); });
   const plan = !g ? "" : ((g.stale ? "This picture is from before the last move: press Look again. " : "") + (g.order.length ? `Tower, bottom first: ${g.order.join(", ")} (${g.height_mm} mm high).` : "Nothing in this picture can go onto a tower.") + (g.left_out.length ? " Left out: " + g.left_out.join("; ") + "." : ""));
   $("e_plan").textContent = plan; $("e_plan").title = plan;
@@ -172,8 +180,13 @@ const tower = what => post("/api/tower", {on: $("tw_on").value, block_mm: +$("tw
 $("tw_build").onclick = () => tower("build"); $("tw_down").onclick = () => tower("down"); $("tw_loop").onclick = () => tower("loop");
 $("lookbtn").onclick = () => post("/api/look"); $("e_show").onclick = () => post("/api/show_table", {kind: $("e_kind").value, n: +$("e_n").value, step: $("step").checked});
 $("e_build").onclick = () => post("/api/build_seen", {on: $("e_on").value, rehearse: $("rehearse").checked, step: $("step").checked});
-const setTab = t => { tab = t; $("tab_blocks").classList.toggle("on", t === "blocks"); $("tab_cam").classList.toggle("on", t === "cam"); show("pane_blocks", t === "blocks"); show("pane_cam", t === "cam"); };
-$("tab_blocks").onclick = () => setTab("blocks"); $("tab_cam").onclick = () => setTab("cam");
+const watched = (rounds, scatter) => post("/api/build_watched", {on: $("w_on").value, push: $("w_push").checked, width: $("w_width").checked, step: $("step").checked, rounds: rounds, scatter: scatter});
+$("w_build").onclick = () => watched(1, false); $("w_collect").onclick = () => watched(+$("w_rounds").value, true);
+$("w_scatter").onclick = () => post("/api/scatter", {on: $("w_on").value, step: $("step").checked});
+$("rec_on").onchange = () => post("/api/record", {on: $("rec_on").checked}); $("rec_good").onclick = () => post("/api/judge", {good: true}); $("rec_bad").onclick = () => post("/api/judge", {good: false});
+$("pair_fit").onclick = () => post("/api/pair", {do: "fit"}); $("pair_use").onclick = () => post("/api/pair", {do: "use"});
+const setTab = t => { tab = t; for (const k of ["blocks", "cam", "loop"]) { $("tab_" + k).classList.toggle("on", t === k); show("pane_" + k, t === k); } };
+$("tab_blocks").onclick = () => setTab("blocks"); $("tab_cam").onclick = () => setTab("cam"); $("tab_loop").onclick = () => setTab("loop");
 $("logbtn").onclick = () => { show("logdrawer", $("logdrawer").hidden); const lg = $("log"); lg.scrollTop = lg.scrollHeight; };
 // the small sheets (help, find the table): a button with data-pop opens one over the controls; a click elsewhere closes it
 function closePops() { document.querySelectorAll(".pop.on").forEach(p => p.classList.remove("on")); }

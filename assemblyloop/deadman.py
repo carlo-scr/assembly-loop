@@ -105,7 +105,7 @@ class QuestDeadman(Deadman):
             raise ValueError("hand must be right, left or either")
         self.port, self.host, self.hand, self.threshold = int(port), host, hand, float(threshold)
         self._seq, self._sock, self._thread, self._run = None, None, None, False
-        self.last_grip = None
+        self.last_grip, self.sender, self.strangers = None, None, 0  # whose frames count (the first headset heard), and how many frames of others were dropped
         self.name, self.searches = f"{socket.gethostname() or 'lab-pc'} (assembly-loop)", 0  # as listed in the headset; searches answered
 
     def why(self):
@@ -116,8 +116,17 @@ class QuestDeadman(Deadman):
             return f'{w}: the headset is searching, choose "{self.name}" in its server list'
         return f"{w}: open the connect screen of the headset app, on the same network as this computer"
 
-    def on_packet(self, data, t=None):
-        """Take one datagram. Returns True if it counted as a fresh signal."""
+    def on_packet(self, data, t=None, addr=None):
+        """Take one datagram. Returns True if it counted as a fresh signal. Only ONE headset is the switch: the first
+        one heard (`addr`, its network address) until the session ends. A second sender that reports "held" must not
+        keep the arm moving after the person at the stop button has let go. A frame without a running number cannot
+        be told from a repeated one and does not count."""
+        if addr is not None:
+            if self.sender is None:
+                self.sender = addr[0]
+            elif addr[0] != self.sender:
+                self.strangers += 1
+                return False
         try:
             f = json.loads(data)
         except (ValueError, UnicodeDecodeError):
@@ -125,10 +134,11 @@ class QuestDeadman(Deadman):
         if not isinstance(f, dict):
             return False
         seq = f.get("seq")
-        if isinstance(seq, (int, float)) and not isinstance(seq, bool):
-            if self._seq is not None and seq <= self._seq and self._seq - seq < 1000:  # a restart of the app counts down by a lot
-                return False
-            self._seq = seq
+        if not isinstance(seq, (int, float)) or isinstance(seq, bool) or seq != seq:
+            return False
+        if self._seq is not None and seq <= self._seq and self._seq - seq < 1000:  # a restart of the app counts down by a lot
+            return False
+        self._seq = seq
         try:
             grips = [float((f.get(h) or {}).get("grip", 0.0) or 0.0) for h in (("left", "right") if self.hand == "either" else (self.hand,))]
         except (TypeError, ValueError, AttributeError):
@@ -144,7 +154,7 @@ class QuestDeadman(Deadman):
         except OSError:
             sock.close()
             raise
-        self._sock, self._seq = sock, None
+        self._sock, self._seq, self.sender = sock, None, None
         self._sock.settimeout(0.2)
         self._run = True
         self._thread = threading.Thread(target=self._loop, daemon=True)
@@ -161,7 +171,7 @@ class QuestDeadman(Deadman):
                 break
             reply = discovery_reply(data, self.port, self.name, busy=not super().why().startswith("no signal"))
             if reply is None:
-                self.on_packet(data)
+                self.on_packet(data, addr=addr)
                 continue
             self.searches += 1
             try:

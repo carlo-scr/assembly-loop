@@ -138,10 +138,12 @@ def demo_spots():
     return s
 
 
-def plan_move(spots, src, dst, here, P, rehearse=False, src_up=0.0, dst_up=0.0):
+def plan_move(spots, src, dst, here, P, rehearse=False, src_up=0.0, dst_up=0.0, width_mm=None, open_counts=None):
     """Steps to take the thing at `src` and put it down at `dst`, starting from wherever the arm is (`here`).
     `src_up` / `dst_up` [mm] raise the pick-up / the put-down above the taught spot (the levels of a tower).
-    A rehearsal does the same travel at the travel height and never comes down."""
+    A rehearsal does the same travel at the travel height and never comes down. `width_mm`: how wide the thing is
+    between the jaws, if that is known: something of another width is let go again (`cycle.WrongWidth`). `open_counts`: how far the jaws open before they come down around the
+    thing (all the way unless given: less, where other things stand close by)."""
     if src == dst:
         raise Refused("from and to are the same spot")
     up = spots.up
@@ -151,11 +153,11 @@ def plan_move(spots, src, dst, here, P, rehearse=False, src_up=0.0, dst_up=0.0):
     S = [dict(name="go to the travel height", kind="move", to=spots.above(here), speed=P.lift),
          dict(name=f"go above {src}", kind="move", to=hs, speed=P.travel),
          dict(name=f"turn the gripper as at {src}", kind="turn", rpy=spots.turn(src)),
-         dict(name="open the gripper", kind="grip", counts=P.open_counts)]
+         dict(name="open the gripper", kind="grip", counts=P.open_counts if open_counts is None else int(open_counts))]
     if not rehearse:
         first = gs + min(20.0, spots.lift) * up
         S += [dict(name=f"lower around the thing at {ns}", kind="move", to=gs, speed=P.slow, stall_mm=P.stall_mm),
-              dict(name="close on it", kind="grip", counts=P.shut_counts, must_hold=True),
+              dict(name="close on it", kind="grip", counts=P.shut_counts, must_hold=True, width_mm=width_mm, back_to=hs),  # empty or wrong: straight back up, not across the table
               dict(name="read the grasp", kind="read"),
               dict(name="lift it, slowly at first", kind="move", to=first, speed=P.press, stall_mm=P.pull_stall_mm, let_go_if_blocked=True),
               dict(name="lift to the travel height", kind="move", to=hs, speed=P.lift)]

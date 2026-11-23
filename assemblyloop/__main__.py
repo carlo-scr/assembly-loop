@@ -106,6 +106,8 @@ def cmd_look(a):
     from . import eyes
     from .blocks import Catalogue
 
+    if a.again:
+        return cmd_look_again(a)
     im = eyes.cv2.imread(a.picture) if a.picture else eyes.grab(a.camera or eyes.SCENE_CAMERA)
     if im is None:
         raise SystemExit(f"{a.picture} is not a picture")
@@ -125,6 +127,48 @@ def cmd_look(a):
         out = eyes.draw(im, blobs)
     eyes.cv2.imwrite(a.out, out)
     print(f"wrote {a.out}")
+
+
+def cmd_look_again(a):
+    """Every picture a session kept (`assembly_logs/<session>/looks/`), looked at again with the block finder as it
+    is now, next to what it made of it then. This is how a change to the block finder is tried on real pictures."""
+    from . import eyes
+    from .blocks import Catalogue
+
+    setup, cat = eyes.Setup.load(a.setup), Catalogue.load(a.blocks)
+    tall = max(r.height for k in cat.kinds for r in k.rests())
+    pictures = sorted(Path(a.again).rglob("looks/*.jpg")) or sorted(Path(a.again).glob("*.jpg"))
+    same = 0
+    for f in pictures:
+        im = eyes.cv2.imread(str(f))
+        then = json.loads(f.with_suffix(".json").read_text()) if f.with_suffix(".json").exists() else None
+        seen, unknown, _ = eyes.look(im, setup.camera, setup.table, cat, setup.region((im.shape[1], im.shape[0]), tall))
+        seen = [s for s in seen if setup.inside(s.uv)]
+        now = sorted(f"{s.kind.name} ({s.rest.name})" for s in seen)
+        was = None if then is None else sorted(f"{b['kind']} ({b['lies']})" for b in then["seen"])
+        same += now == was
+        print(f"  {f.parent.parent.name}/{f.name}: now {len(seen)} blocks, {len(unknown)} not made out" + ("" if was is None else ("; as then" if now == was else f"; THEN {', '.join(was) or 'nothing'}; NOW {', '.join(now) or 'nothing'}")))
+    print(f"{len(pictures)} pictures, {same} read as they were read then")
+    return dict(pictures=len(pictures), same=same)
+
+
+def cmd_pair(a):
+    """Fit the two arms to each other from the spots both were taught at the same marks. Moves nothing, connects to nothing."""
+    from .session import Session, default_arms
+
+    ses = Session(default_arms(mount_deg=a.mount_deg), spots_path=a.spots, rig_path=a.out, probe=lambda ip: False, say=print)
+    try:
+        frame = ses.pair_fit()
+        for name, mm in zip(frame.names, frame.residuals_mm):
+            print(f"  {name:12s} off by {mm:.1f} mm")
+    finally:
+        ses.close()
+
+
+def cmd_export(a):
+    from .export import main as export_main
+
+    return export_main(a.rest)
 
 
 def cmd_teach(a):
@@ -234,7 +278,7 @@ def cmd_dashboard(a):
 
         feeds = Feeds()  # opens no camera until a page asks for pictures
     ses = Session(default_arms(a.right, a.left, a.mount_deg), quest_port=a.quest_port, hand=a.hand, spots_path=a.spots, log_dir=a.log, say=print, camera=camera, key_hold=a.key_hold,
-                  feeds=feeds)
+                  feeds=feeds, rig_path=a.rig, record=not a.no_record, record_hz=a.record_hz)
     srv = make_server(ses, a.port)
     print(f"dashboard: http://127.0.0.1:{srv.server_address[1]}/   (nothing is connected until you start a session on the page; Ctrl-C here stops the arm and closes)")
     print(f"           http://127.0.0.1:{srv.server_address[1]}/classic   the older page, without the model and the live pictures")
@@ -278,9 +322,16 @@ def main(argv=None):
     s = sub.add_parser("look")
     s.add_argument("--camera", default=None, help="the camera's device (default: the rig's left scene camera)")
     s.add_argument("--picture", default=None, help="look at this picture file instead of taking one")
+    s.add_argument("--again", default=None, help="a session's folder (or assembly_logs itself): look again at every picture kept there")
     s.add_argument("--out", default="look.jpg")
     s.add_argument("--setup", default="camera.json")
     s.add_argument("--blocks", default="blocks.json")
+    s = sub.add_parser("pair", help="fit the two arms to each other from spots taught with both at the same marks")
+    s.add_argument("--spots", default="spots.json")
+    s.add_argument("--out", default="rig.json")
+    s.add_argument("--mount_deg", type=float, default=45.0)
+    s = sub.add_parser("export", help="recorded episodes as a LeRobot dataset or .npz: export SRC OUT [REPO_ID] [--npz ...]")
+    s.add_argument("rest", nargs=argparse.REMAINDER)
     s = sub.add_parser("status")
     s.add_argument("--ip", required=True)
     s = sub.add_parser("teach")
@@ -299,6 +350,9 @@ def main(argv=None):
     s.add_argument("--mount_deg", type=float, default=45.0, help="how far the arms are rolled about their forward axis where they are mounted (0: upright)")
     s.add_argument("--camera", default=None, help="the camera that looks at the table (default: the rig's left scene camera)")
     s.add_argument("--no_feeds", action="store_true", help="show no live pictures: the page then opens no camera at all")
+    s.add_argument("--no_record", action="store_true", help="record no episodes (pictures, joints and what was asked, while a job runs)")
+    s.add_argument("--record_hz", type=float, default=10.0, help="how many rows a second an episode gets")
+    s.add_argument("--rig", default="rig.json", help="where the two arms' places to each other are kept")
     s.add_argument("--quest_port", type=int, default=6666)
     s.add_argument("--hand", default="right")
     s.add_argument("--port", type=int, default=8777)
@@ -308,7 +362,7 @@ def main(argv=None):
         Path(a.out).write_text(json.dumps(demo(), indent=1))
         print(f"wrote {a.out} (made up, for `plan` only)")
         return None
-    return dict(plan=cmd_plan, deadman=cmd_deadman, status=cmd_status, teach=cmd_teach, run=cmd_run, dashboard=cmd_dashboard, look=cmd_look)[a.cmd](a)
+    return dict(plan=cmd_plan, deadman=cmd_deadman, status=cmd_status, teach=cmd_teach, run=cmd_run, dashboard=cmd_dashboard, look=cmd_look, pair=cmd_pair, export=cmd_export)[a.cmd](a)
 
 
 if __name__ == "__main__":

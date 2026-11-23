@@ -17,7 +17,11 @@
      of any OTHER move the same comparison is made with a wider limit (`free_lag_mm`): there, being held back means
      the arm has run into something, which stops the arm and ends the run;
   7. TURNS the gripper only by spinning its last joint, in pieces, each checked the same way (`turn_by`, `turn_to`);
-  8. writes every request and every refusal to a log.
+  8. writes every request and every refusal to a log;
+  9. with a `watch` (the OTHER arm of the rig, see `pair.Watch`): starts no segment that could bring this arm within
+     the stop distance of the other one (Refused: nothing moved), cuts its segments shorter near it, and stops and
+     latches if the two are ever closer than that while a move is under way. An other arm that cannot be read counts
+     as too close. Without a watch nothing is known about the other arm: a person keeps it out of the way.
 
 While a move is under way only the state the controller publishes by itself is read (no call that can block), so the
 switch and the stall watch are checked every `poll_s`.
@@ -84,8 +88,9 @@ class Limits:
 
 
 class Guard:
-    def __init__(self, arm, deadman, limits, log_path=None, clock=time.monotonic, sleep=time.sleep, poll_s=0.02, start_s=120.0, resume_s=15.0, say=print):
-        self.arm, self.deadman, self.lim = arm, deadman, limits
+    def __init__(self, arm, deadman, limits, log_path=None, clock=time.monotonic, sleep=time.sleep, poll_s=0.02, start_s=120.0, resume_s=15.0, say=print, watch=None):
+        self.arm, self.deadman, self.lim, self.watch = arm, deadman, limits, watch
+        self.doing, self.asked = None, None  # the segment that is under way (what, goal, speed) and the last gripper opening asked for: for the recorder
         self.clock, self.sleep, self.poll_s, self.start_s, self.resume_s, self.say = clock, sleep, float(poll_s), float(start_s), float(resume_s), say
         self.latched, self.events, self._abort = None, [], None
         self.counts = None  # where the gripper came to rest the last time it was sent somewhere (for the page's model)
@@ -121,6 +126,7 @@ class Guard:
             raise Released(why)
 
     def _fail(self, why):
+        self.doing = None
         try:
             self.arm.stop()
         finally:
@@ -194,7 +200,7 @@ class Guard:
                 raise Refused(f"{what}: {'the arm is' if p is start else 'the target is'} outside the allowed volume ({why})")
         length = float(np.linalg.norm(target - start))
         if stall_mm is None:
-            n = max(int(np.ceil(length / self.lim.max_step_mm - 1e-9)), 1)
+            n = max(int(np.ceil(length / self._step_now(what) - 1e-9)), 1)
             for i in range(n):
                 self._segment(start + (target - start) * (i + 1) / n, speed, what)
                 self.sleep(self.lim.settle_s)
@@ -217,6 +223,49 @@ class Guard:
                 raise Blocked(f"{what}: the arm is {behind:.1f} mm behind its plan, {length * (i + 1) / n:.0f} mm into the move")
         self.note("watched", what=what, worst_behind_mm=worst)
 
+    def _pause(self, what):
+        """Hold the move that is under way. A controller that does not take the pause is stopped, and the run ends."""
+        try:
+            self.arm.pause()
+        except ArmFault as e:
+            self._fail(f"{what}: the pause was not taken ({e})")
+        self.note("pause", what=what)
+
+    def _resume(self, what):
+        try:
+            self.arm.resume()
+        except ArmFault as e:  # a move must not stay waiting in the controller for whoever enables the arm next
+            self._fail(f"{what}: the move could not be taken up again ({e})")
+        self.note("resume", what=what)
+
+    def _step_now(self, what):
+        """The longest segment that may start now: the limits' own, or less when the other arm is near."""
+        if self.watch is None:
+            return self.lim.max_step_mm
+        step = float(min(self.lim.max_step_mm, self.watch.max_step(self.lim.max_step_mm)))
+        if step < 5.0:
+            why = self.watch.why(5.0) or "the other arm is too near"
+            self.note("refused", what=what, why=why)
+            raise Refused(f"{what}: {why}")
+        return step
+
+    def _clear(self, what, step_mm):
+        """Before anything is sent: may this arm move `step_mm` with the other arm where it is? (Refused: nothing moved.)"""
+        if self.watch is None:
+            return
+        why = self.watch.why(float(step_mm))
+        if why:
+            self.note("refused", what=what, why=why)
+            raise Refused(f"{what}: {why}")
+
+    def _keep_clear(self, what):
+        """While a move is under way: closer to the other arm than the stop distance ends the run."""
+        if self.watch is None:
+            return
+        why = self.watch.too_close()
+        if why:
+            self._fail(f"{what}: {why}")
+
     def _lag(self):
         try:
             return np.asarray(self.arm.lag_mm(), float)
@@ -232,9 +281,11 @@ class Guard:
         if length > self.lim.max_step_mm * 1.5:  # the arm is not where the plan says it is
             self._fail(f"{what}: the next segment would be {length:.1f} mm, the arm is not where it should be")
         self._check_abort()
-        self._wait_hold(what, self.start_s)
         self._check_fault()
+        self._clear(what, length)
+        self._wait_hold(what, self.start_s)  # the last thing before the move is sent: nothing that can take time comes after it
         self.note("move", what=what, d=d, speed=speed, goal=goal)
+        self.doing = dict(what=what, goal=[float(v) for v in goal], speed=float(speed))
         try:
             self.arm.move_rel(d, speed, self.lim.acc_mm_s2)
         except ArmFault as e:
@@ -243,15 +294,15 @@ class Guard:
         while True:
             self._check_abort()
             self._check_fault(now=True)
+            self._keep_clear(what)
             if not self.deadman.held():
                 t_p = self.clock()
-                self.arm.pause()
-                self.note("pause", what=what)
+                self._pause(what)
                 self._wait_hold(what, self.resume_s, moving=True)
-                self.arm.resume()
-                self.note("resume", what=what)
+                self._resume(what)
                 held_back += self.clock() - t_p
             if float(np.linalg.norm(self.arm.xyz_now() - goal)) <= self.lim.arrive_mm and not self.arm.moving_now():
+                self.doing = None
                 return
             if self.clock() - t0 - held_back > budget:
                 self._fail(f"{what}: the move did not arrive ({np.linalg.norm(self.arm.xyz_now() - goal):.1f} mm short)")
@@ -291,8 +342,9 @@ class Guard:
         if abs(d) < 1e-3:
             return
         self._check_abort()
-        self._wait_hold(what, self.start_s)
         self._check_fault()
+        self._clear(what, 0.0)
+        self._wait_hold(what, self.start_s)
         self.note("turn", what=what, deg=d, goal=goal)
         try:
             self.arm.turn_rel(d, self.lim.turn_speed_deg_s, self.lim.turn_acc_deg_s2)
@@ -304,11 +356,9 @@ class Guard:
             self._check_fault(now=True)
             if not self.deadman.held():
                 t_p = self.clock()
-                self.arm.pause()
-                self.note("pause", what=what)
+                self._pause(what)
                 self._wait_hold(what, self.resume_s, moving=True)
-                self.arm.resume()
-                self.note("resume", what=what)
+                self._resume(what)
                 held_back += self.clock() - t_p
             if abs(self.arm.j7_now() - goal) <= 0.5 and not self.arm.moving_now():
                 return
@@ -339,7 +389,8 @@ class Guard:
             self.turn_by(cmd, what)
             after, _ = twist_deg(rpy_matrix(self.arm.pose()[3:]), want)
             if not self._sign_known:
-                if abs(after) > abs(left) + 1.0:
+                moved = (left - after + 180.0) % 360.0 - 180.0  # how far the gripper really spun towards the goal (not fooled where 180 becomes -180)
+                if moved * go < 0.0 and abs(moved) > 1.0:
                     self.turn_sign = -self.turn_sign
                     self.note("turn_sign", sign=self.turn_sign)
                 self._sign_known = True
@@ -387,6 +438,7 @@ class Guard:
         self._check_abort()
         self._wait_hold(what, self.start_s)
         self._check_fault()
+        self._clear(what, 60.0)  # the fingertips swing sideways while the gripper tilts
         want, j0 = rpy_matrix(goal), np.array(self.arm.joints(False), float)
         piece = float(np.degrees(np.arccos(np.clip((np.trace(rpy_matrix(self.arm.pose()[3:]).T @ want) - 1.0) / 2.0, -1.0, 1.0))))
         self.note("tilt", what=what, deg=piece, goal=np.asarray(goal, float))
@@ -403,11 +455,9 @@ class Guard:
                 self._fail(f"{what}: a joint moved {swing:.0f} deg for a tilt of {piece:.1f} deg: the arm is re-posing itself. Point the gripper down by hand or in UFACTORY Studio")
             if not self.deadman.held():
                 t_p = self.clock()
-                self.arm.pause()
-                self.note("pause", what=what)
+                self._pause(what)
                 self._wait_hold(what, self.resume_s, moving=True)
-                self.arm.resume()
-                self.note("resume", what=what)
+                self._resume(what)
                 held_back += self.clock() - t_p
             off = float(np.degrees(np.arccos(np.clip((np.trace(rpy_matrix(self.arm.rpy_now()).T @ want) - 1.0) / 2.0, -1.0, 1.0))))
             if off <= 0.5 and not self.arm.moving_now():
@@ -421,6 +471,7 @@ class Guard:
         self._check_abort()
         self._wait_hold(what, self.start_s)
         self._check_fault()
+        self.asked = int(counts)
         try:
             got = self.arm.grip(counts)
         except ArmFault as e:

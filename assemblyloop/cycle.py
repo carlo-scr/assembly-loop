@@ -20,6 +20,11 @@ class NothingHeld(RuntimeError):
     """The jaws closed on nothing. The arm was lifted clear with the gripper open."""
 
 
+class WrongWidth(NothingHeld):
+    """The jaws closed on something that is not as wide as the block they were sent for. It was let go where it
+    stood and the arm was lifted clear with the gripper open."""
+
+
 @dataclass
 class Params:
     travel: float = 100.0  # across, at the travel height, with nothing near
@@ -39,6 +44,9 @@ class Params:
     pull_stall_mm: float = 4.0  # pulling a brick off its studs is allowed a little more, then it counts as stuck
     drop_mm: float = 2.0  # on a tower a block is let go this far above where it should rest, so that nothing is pressed
     rest_ok_mm: float = 6.0  # a put-down that meets something this close to its target counts as put down
+    width_tol_mm: float = 6.0  # a block the camera named is taken for another one if the jaws stop this far from its width
+    counts_per_mm: float = 10.0  # the gripper's counts for a millimetre between the jaws (UFACTORY's gripper: 850 counts = 85 mm)
+    push_stall_mm: float = 3.0  # a push along the table ends once the arm is this far behind its plan: what is pushed does not slide
 
     def check(self):
         if not (0 < self.press <= self.slow <= self.lift <= self.travel <= 120.0):
@@ -51,11 +59,15 @@ class Params:
             raise Refused("stall limits: 0.5 to 4 mm to press, up to 6 mm to pull")
         if not (0.0 <= self.drop_mm <= 5.0 and 0.0 <= self.rest_ok_mm <= 10.0):
             raise Refused("a block is let go at most 5 mm above its place, and may rest at most 10 mm short of it")
+        if not (2.0 <= self.width_tol_mm <= 15.0 and 1.0 <= self.push_stall_mm <= 4.0):
+            raise Refused("the width of a held block may be 2 to 15 mm off; a push ends 1 to 4 mm behind its plan")
 
 
 def plan(plate, src, dst, offset_mm=0.0, correction_mm=0.0, P=None, air_mm=0.0):
     P = P or Params()
     P.check()
+    if not 0.0 <= float(air_mm) <= 300.0:
+        raise Refused("the whole cycle can be lifted 0 to 300 mm into the air, never lowered")
     for name, v in (("offset", offset_mm), ("correction", correction_mm)):
         if abs(v) > P.max_offset_mm:
             raise Refused(f"{name} of {v:.1f} mm is beyond {P.max_offset_mm:.0f} mm")
@@ -92,7 +104,12 @@ def execute(guard, steps, P=None, air=False, before=None, after=None):
       - a watched move is blocked: the arm is enabled again and lifted straight back to the hover height it last came
         from, WITHOUT opening the gripper, and the result says where (`blocked`). The run can go on;
       - a put-down (a step with `rest_ok_mm`) that is blocked that close to its target stands on what is below it:
-        that IS the put-down, and the plan goes on (`rested` says how far short)."""
+        that IS the put-down, and the plan goes on (`rested` says how far short);
+      - a grip step with `width_mm` closes on something of another width (not in the air): it is let go where it
+        stands, the arm is lifted clear, WrongWidth raised;
+      - a step with `stop_ok` (a push) that is blocked has simply pushed as far as it could: the plan goes on;
+      - a step with `straight_up` = (the direction 'up', the height to go back to): when blocked, the arm is lifted
+        along that direction instead of back along the line it came."""
     P = P or Params()
     out = dict(reads={}, grips={}, blocked=None, rested=None)
     hover = next(s["to"] for s in steps if s["kind"] == "move")
@@ -110,6 +127,10 @@ def execute(guard, steps, P=None, air=False, before=None, after=None):
                         guard.recover()
                         out["rested"] = dict(step=s["name"], short_mm=round(short, 1))
                         continue
+                    if s.get("stop_ok"):
+                        guard.recover()
+                        out["pushed_short"] = dict(step=s["name"], short_mm=round(short, 1))
+                        continue
                     out["blocked"] = dict(step=s["name"], why=str(e))
                     guard.recover()
                     if s.get("let_go_if_blocked"):  # the thing will not come off: let go of it before lifting
@@ -117,10 +138,18 @@ def execute(guard, steps, P=None, air=False, before=None, after=None):
                     here = guard.where()
                     up = last_hover - s["to"]  # straight back up along the line the arm came down
                     lift = here + up * (float((last_hover - here) @ up) / float(up @ up)) if float(up @ up) > 1e-9 else last_hover
+                    if s.get("straight_up") is not None:
+                        u, w = np.asarray(s["straight_up"][0], float), float(s["straight_up"][1])
+                        lift = here + max(0.0, w - float(here @ u)) * u
                     guard.move_to(lift, P.press, "lift clear: the move was blocked")
                     return out
                 if s.get("stall_mm") is None:
                     last_hover = s["to"]
+            elif s["kind"] == "rise":  # straight up from wherever the arm is now, to a height
+                here, u = guard.where(), np.asarray(s["up"], float)
+                if float(s["w"]) - float(here @ u) > 1e-3:
+                    guard.move_to(here + (float(s["w"]) - float(here @ u)) * u, s["speed"], s["name"])
+                last_hover = guard.where()
             elif s["kind"] == "turn":
                 try:
                     guard.turn_to(s["rpy"], s["name"])
@@ -133,8 +162,12 @@ def execute(guard, steps, P=None, air=False, before=None, after=None):
                 out["grips"][s["name"]] = got
                 if s.get("must_hold") and not air and got < P.held_min_counts:
                     guard.grip(P.open_counts, "open again: nothing was held")
-                    guard.move_to(hover, P.slow, "lift clear: nothing was held")
+                    guard.move_to(hover if s.get("back_to") is None else s["back_to"], P.slow, "lift clear: nothing was held")
                     raise NothingHeld(f"the jaws closed to {got} counts: no brick")
+                if s.get("width_mm") is not None and not air and abs(got / P.counts_per_mm - s["width_mm"]) > P.width_tol_mm:
+                    guard.grip(P.open_counts, "open again: this is not the block that was meant")
+                    guard.move_to(hover if s.get("back_to") is None else s["back_to"], P.slow, "lift clear: another block was held")
+                    raise WrongWidth(f"the jaws stopped {got / P.counts_per_mm:.0f} mm apart, but the block that was meant is {s['width_mm']:.0f} mm across")
             elif s["kind"] == "read":
                 out["reads"][s["name"]] = guard.read(s["name"])
         finally:

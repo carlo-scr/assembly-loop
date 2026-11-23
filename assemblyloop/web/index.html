@@ -86,7 +86,7 @@
 
     <div id="p_run" hidden>
       <div class="head">
-        <div class="tabs"><button id="tab_blocks" class="on">Blocks</button><button id="tab_cam">Camera</button></div>
+        <div class="tabs"><button id="tab_blocks" class="on">Blocks</button><button id="tab_cam">Camera</button><button id="tab_loop">Loop</button></div>
         <span class="grow"></span>
         <label class="chk"><input type="checkbox" id="rehearse" checked> rehearse in the air</label>
         <label class="chk"><input type="checkbox" id="step" checked> one step at a time</label>
@@ -126,6 +126,33 @@
           <label class="mini col narrow">Places<input type="number" id="e_n" value="12" min="8" max="20"></label>
           <button id="e_show">Show the camera the table</button>
         </div>
+      </div>
+
+      <div id="pane_loop" hidden>
+        <div id="w_why" class="note"></div>
+        <div class="row">
+          <label class="mini col">Tower stands on<select id="w_on"></select></label>
+          <label class="mini col narrow">Rounds<input type="number" id="w_rounds" value="1" min="1" max="200"></label>
+          <label class="mini"><input type="checkbox" class="tick" id="w_push" checked> push apart</label>
+          <label class="mini"><input type="checkbox" class="tick" id="w_width" checked> check widths</label>
+        </div>
+        <div class="row">
+          <button id="w_build" class="go" title="The arm steps aside after every block and the camera looks again: a block that fell is taken again, and the next one is aimed by where the last one really stands">Build, looking after every block</button>
+          <button id="w_collect" title="Build, take apart, lay the blocks at places picked at random, and again: for the rounds">Build and spread, for the rounds</button>
+          <button id="w_scatter">Spread the tower</button>
+        </div>
+        <h3>Recording</h3>
+        <div class="row">
+          <label class="mini"><input type="checkbox" class="tick" id="rec_on" checked> record jobs</label>
+          <button id="rec_good" class="x">last episode: good</button><button id="rec_bad" class="x">bad</button>
+        </div>
+        <div id="rec_note" class="note clamp"></div>
+        <h3>Two arms</h3>
+        <div class="row">
+          <button id="pair_fit" class="x" title="From spots taught with both arms at the same marks, under the same names">Fit the arms to each other</button>
+          <button id="pair_use" class="x" title="Take the other arm's spots and camera, carried over into this arm's frame">Use the other arm's spots</button>
+        </div>
+        <div id="pair_note" class="note clamp"></div>
       </div>
 
       <div id="jobbox">

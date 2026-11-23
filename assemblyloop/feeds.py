@@ -136,6 +136,7 @@ class Feeds:
         self.size, self.fps, self.idle_s, self.open, self.encode = tuple(size), float(fps), float(idle_s), open, encode
         self.cond, self.seq, self.closed, self.watched, self.side = threading.Condition(), 0, False, -1e9, None
         self.owners = []
+        self.kept = {}  # camera id -> when a recorder last asked for its picture (`latest`): a reason to stream that is not the page's
         for spec in cameras if cameras is not None else rig_cameras():
             self.add(spec)
 
@@ -154,7 +155,26 @@ class Feeds:
         return ""
 
     def wants(self, owner):
-        return (time.monotonic() - self.watched) < self.idle_s and self.side in owner.arms
+        """Two separate reasons to keep a camera open: a page is watching the arm it belongs to, or a recorder asked
+        for its picture (`latest`) less than `idle_s` ago."""
+        now = time.monotonic()
+        return ((now - self.watched) < self.idle_s and self.side in owner.arms) or (now - self.kept.get(owner.id, -1e9)) < self.idle_s
+
+    def latest(self, sides, keep_awake=True):
+        """For a recorder: the newest picture of every camera that belongs to any of the arms `sides` ("right", "left",
+        "stand-in"; one name or several), whether or not a page is open. Never waits for a picture: a camera that has
+        given none yet comes with jpg b"" and seq 0, and its `note` says why. With `keep_awake` those cameras are
+        opened and kept streaming for `idle_s` after the last call, whatever the page is looking at."""
+        sides = {sides} if isinstance(sides, str) else set(sides or ())
+        with self.cond:  # held for a moment only: nobody waits for a picture inside it
+            now = time.monotonic()
+            mine = [o for o in self.owners if sides.intersection(o.arms)]
+            if keep_awake:
+                for o in mine:
+                    self.kept[o.id] = now
+                    if not o.is_alive() and not o.ident and not self.closed:
+                        o.start()
+            return [dict(id=o.id, jpg=o.jpg, seq=o.seq, age_ms=None if not o.seq else int(1000 * (now - o.at)), size=o.size, note=o.note) for o in mine]
 
     def nap(self, secs):
         end = time.monotonic() + float(secs)
@@ -199,6 +219,9 @@ class Feeds:
         with self.cond:
             self.closed = True
             self.cond.notify_all()
+        for o in self.owners:  # every camera is let go before this returns, not a moment later
+            if o.is_alive() and o is not threading.current_thread():
+                o.join(timeout=2.0)
 
 
 class MadeUp:

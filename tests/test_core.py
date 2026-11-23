@@ -161,6 +161,29 @@ def test_staying_released_stops_the_arm_and_ends_the_run():
     assert len(arm.log) == n
 
 
+def test_a_controller_that_does_not_take_the_pause_or_the_resume_is_stopped():
+    for broken, why in (("pause", "the pause was not taken"), ("resume", "could not be taken up again")):
+        plate, arm, dm, g, _ = rig(script=lambda t: not (0.5 <= t < 1.5))
+
+        def refuse(broken=broken):
+            raise ArmFault(f"{broken} was refused by the controller (code 9)")
+
+        setattr(arm, broken, refuse)
+        g.start()
+        with pytest.raises(ArmFault, match=why):
+            g.move_to(plate.hover("F3"), 60.0, "travel")
+        assert arm.stopped and arm.target is None and g.latched  # nothing is left waiting in the controller for whoever enables the arm next
+        with pytest.raises(ArmFault):
+            g.recover()
+
+
+def test_a_cycle_is_never_lowered_below_where_it_was_taught():
+    plate = Plate.from_taught(demo())
+    for air in (-30.0, float("nan"), 1e9):
+        with pytest.raises(Refused, match="never lowered"):
+            plan(plate, "C3", "E3", air_mm=air)
+
+
 def test_a_controller_error_stops_and_latches():
     plate, arm, dm, g, _ = rig()
     g.start()
@@ -233,6 +256,14 @@ def test_turning_to_a_taught_orientation_whichever_way_the_joint_spins_it():
         assert abs(twist_deg(rpy_matrix(arm.rpy), rpy_matrix([180.0, 0.0, -45.0]))[0]) <= 1.0
         with pytest.raises(Refused, match="axis"):
             g.turn_to([170.0, 0.0, 0.0], "a tilt is not a turn")
+    for sign in (1.0, -1.0):  # almost half a turn: which way the joint spins it must not be misread where 180 becomes -180
+        for yaw in (178.0, -178.0):
+            plate, arm, dm, g, _ = rig()
+            arm.turn_sign = sign
+            g.start()
+            g.turn_to([180.0, 0.0, yaw], "end for end")
+            assert abs(twist_deg(rpy_matrix(arm.rpy), rpy_matrix([180.0, 0.0, yaw]))[0]) <= 1.0 and g.turn_sign == sign and g.latched is None
+            assert sum(abs(t[2]) for t in turns(arm)) < 200.0  # and not the long way round
 
 
 def test_orientation_helpers():

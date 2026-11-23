@@ -27,6 +27,7 @@ from pathlib import Path
 import numpy as np
 
 from .arms import ArmFault, FakeArm, XArm, run_fake_clock
+from .closed import Closed
 from .cycle import NothingHeld, Params, execute
 from .deadman import Deadman, QuestDeadman
 from .feeds import TABLE_CAMERA, MadeUp, same_device
@@ -84,9 +85,10 @@ def jog_axes(rpy_deg):
     return np.stack([fwd, np.cross(up, fwd), up], 1)
 
 
-class Session(Sight):
+class Session(Sight, Closed):
     def __init__(self, arms=None, quest_port=6666, hand="right", spots_path="spots.json", log_dir="assembly_logs", probe=answers, say=None, fake_speed=1.0,
-                 guard_kw=None, limit_kw=None, camera=None, camera_path="camera.json", blocks_path="blocks.json", key_hold=False, feeds=None):
+                 guard_kw=None, limit_kw=None, camera=None, camera_path="camera.json", blocks_path="blocks.json", key_hold=False, feeds=None, rig_path="rig.json",
+                 record=True, record_hz=10.0):
         self.arms, self.quest_port, self.hand, self.probe, self.fake_speed = arms or default_arms(), int(quest_port), hand, probe, float(fake_speed)
         # a move that should meet nothing goes in pieces of up to 80 mm (the guard's own default is 30) at up to 120 mm/s
         # a paused move waits 45 s for the switch (the guard's own default is 15) before the session is ended
@@ -98,6 +100,9 @@ class Session(Sight):
         self.ended = None
         self.key_hold = bool(key_hold)  # the space bar of the page may be the hold-to-run switch of a REAL arm too (asked for when the program is started)
         self.feeds = feeds  # live pictures for the page (`feeds.Feeds`), or None: no pictures
+        self.rec, self.recording, self.record_hz = None, bool(record), float(record_hz)  # the recorder of the session that is running (`record.Recorder`), and whether jobs are recorded
+        self.rig_path, self.other, self.other_side, self.watch = Path(rig_path), None, None, None  # the two arms' places (`pair`), the OTHER arm (read only) and the watch on it
+        self.check_width, self.keep_looks, self.tower_levels, self.left_out = True, True, None, 0  # see `closed`
         if feeds is not None and "stand-in" in self.arms:
             feeds.add(dict(id="made_up", label="Made-up camera", arms=("stand-in",), make=lambda: MadeUp(self._made_up_world)))
         self._sight_init(camera, camera_path, blocks_path)
@@ -194,6 +199,8 @@ class Session(Sight):
             dm = Deadman(timeout_s=0.6 if not fake else 0.3) if hold == "page" else QuestDeadman(port=self.quest_port, hand=self.hand)
             self.arm, self.dm, self.gate, self.fake, self.hold, self.chosen, self.connected = arm, dm, Gate(dm), fake, hold, choice, True
             self.log_dir = self.log_root / time.strftime("%Y%m%d_%H%M%S")
+            self.setup, self._setup_read, self.sight = None, False, None  # the camera's fit is this arm's own
+            self._watch_other()
             self._gen += 1
             self._quest()
             if fake:
@@ -209,6 +216,11 @@ class Session(Sight):
                 self.gate.armed = False
             if worker is not None and guard is not None:
                 guard.abort(why or "the session was ended", latch=True)
+            if self.connected:
+                try:
+                    self.arm.stop()  # now, not after the worker has been waited for
+                except Exception as e:  # noqa: BLE001
+                    self.say(f"while stopping: {type(e).__name__}: {e}")
         if worker is not None:
             worker.join(timeout=3.0)
         with self.lock:
@@ -220,6 +232,20 @@ class Session(Sight):
                     self.say(f"while disconnecting: {type(e).__name__}: {e}")
                 if hasattr(self.dm, "stop"):
                     self.dm.stop()
+                if self.rec is not None:
+                    try:
+                        self.rec.end(why or "the session was ended", success=False)
+                        self.rec.close()
+                    except Exception as e:  # noqa: BLE001
+                        self.say(f"while closing the recording: {type(e).__name__}: {e}")
+                    self.rec = None
+                    self._rest_cameras()
+                if self.other is not None:
+                    try:
+                        self.other.disconnect()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    self.other, self.other_side, self.watch = None, None, None
                 self.say(f"SESSION STOPPED ({why})" if why else "session ended (OFF)")
             self._gen += 1
             job = self.job
@@ -253,7 +279,14 @@ class Session(Sight):
             if bad:
                 raise Refused("cannot arm: " + "; ".join(bad))
             self.log_dir.mkdir(parents=True, exist_ok=True)
-            self.guard = Guard(self.arm, self.gate, self._jog_limits(), log_path=self.log_dir / "guard.jsonl", say=self.say, **self.guard_kw)
+            self.guard = Guard(self.arm, self.gate, self._jog_limits(), log_path=self.log_dir / "guard.jsonl", say=self.say, watch=self.watch, **self.guard_kw)
+            if self.rec is None and self.recording:
+                try:
+                    from .record import Recorder
+
+                    self.rec = Recorder(self.log_root, self._sample, frames=self._rec_frames, hz=self.record_hz, say=self.say)
+                except Exception as e:  # noqa: BLE001  no recording is no reason not to work
+                    self.say(f"not recording: {type(e).__name__}: {e}")
             try:
                 self.guard.start()
             except ArmFault as e:
@@ -287,6 +320,8 @@ class Session(Sight):
         page keep working while it runs."""
         self.job = dict(steps=[dict(name=name)], i=0, waiting=False, outcome=None, done=0, total=1, src=None, dst=None, rehearse=False, step=False, kind="nudge")
 
+        job = self.job
+
         def run():
             g, note = self.guard, ""
             try:
@@ -298,12 +333,21 @@ class Session(Sight):
                 note = f"stopped: {e}"
             except (ArmFault, Refused) as e:
                 note = f"{type(e).__name__}: {e}"
+            except Exception as e:  # noqa: BLE001  a mistake in the program itself: stop the arm and say so, never report "done"
+                note = f"stopped: the program failed ({type(e).__name__}: {e})"
+                try:
+                    self.arm.stop()
+                except Exception:  # noqa: BLE001
+                    pass
+                raise
             finally:
                 latched = g.latched
                 with self.lock:
-                    self.job["outcome"], self.job["i"], self.worker, self.note = note or "done", None, None, note
-                    if note.startswith("stopped") and self.gate is not None:
-                        self.gate.armed = self.teaching = False
+                    job["outcome"], job["i"] = note or "done", None
+                    if self.worker is threading.current_thread():  # not a worker that outlived its session: that one touches nothing
+                        self.worker, self.note = None, note
+                        if note.startswith("stopped") and self.gate is not None:
+                            self.gate.armed = self.teaching = False
                 if note:
                     self.say(f"{name}: {note}")
                 if latched:
@@ -403,7 +447,7 @@ class Session(Sight):
                     d.add("T", here)
                     for name, sign in (("P", -1.0), ("Q", 1.0)):
                         d.add(name, np.r_[here[:3] + sign * (deep / 2.0 * axes[:, 0] + wide / 2.0 * axes[:, 1]), here[3:]])
-                    d.check().save(self.spots_path)
+                    self._keep_spots(d.check())
                     self._adopt(d, thing_at="T")
                 came = float((start - here[:3]) @ axes[:, 2])
                 self.say(f"ARMED: the table is {came:.0f} mm below where the gripper was. The bar lies on T; the area is {wide:.0f} mm across and {deep:.0f} mm deep around it")
@@ -449,7 +493,7 @@ class Session(Sight):
         with self.lock:
             self._teach("finishing")
             self.draft.check()
-            self.draft.save(self.spots_path)
+            self._keep_spots(self.draft)
             self._adopt(self.draft)
             self.say(f"ARMED: spots {', '.join(sorted(self.spots.at))} are known; travel height {self.spots.lift:.0f} mm above the highest")
 
@@ -462,20 +506,50 @@ class Session(Sight):
             self.guard.lim = self._jog_limits()
             self.say("AWAITING CALIBRATION: teach the spots again")
 
-    def saved(self):
-        if not self.spots_path.exists():
-            return None
+    def _file(self, path, side=None):
+        """The file of this kind that belongs to one arm: spots.json -> spots.left.json. What one arm was taught is
+        never written over by a session on another arm (or on the stand-in)."""
+        path, side = Path(path), side or self.chosen
+        return path if side is None else path.with_name(f"{path.stem}.{side}{path.suffix}")
+
+    def _keep_spots(self, spots):
+        """Save taught spots under their arm's own name, and under the plain name unless that holds another arm's."""
+        spots.save(self._file(self.spots_path, spots.side))
         try:
-            s = Spots.load(self.spots_path).check()
-            return dict(names=sorted(s.at), when=time.strftime("%d %b %H:%M", time.localtime(self.spots_path.stat().st_mtime)), side=s.side)
-        except (Refused, ValueError, KeyError, TypeError, OSError):
+            other = Spots.load(self.spots_path).side if self.spots_path.exists() else spots.side
+        except Exception:  # noqa: BLE001  a file nobody can read is in nobody's way
+            other = spots.side
+        if other == spots.side:
+            spots.save(self.spots_path)
+
+    def _saved_spots(self, side=None):
+        """The spots taught earlier with this arm, or None."""
+        side = side or self.chosen
+        for path in (self._file(self.spots_path, side), self.spots_path):
+            if path.exists():
+                try:
+                    s = Spots.load(path).check()
+                except (Refused, ValueError, KeyError, TypeError, AttributeError, OSError):
+                    continue
+                if side is None or s.side == side:
+                    return s, path
+        return None
+
+    def saved(self):
+        got = self._saved_spots()
+        if got is None:
             return None
+        s, path = got
+        return dict(names=sorted(s.at), when=time.strftime("%d %b %H:%M", time.localtime(path.stat().st_mtime)), side=s.side)
 
     def use_saved(self):
-        """Take the spots of an earlier session, if the arm is where they are and turned as it was then."""
+        """Take the spots of an earlier session with this arm, if the arm is where they are and turned as it was then."""
         with self.lock:
             self._teach("using saved spots")
-            s = Spots.load(self.spots_path).check()
+            got = self._saved_spots()
+            if got is None:
+                raise Refused(f"no spots were saved with the {self.arms[self.chosen]['label'].lower()}")
+            s = got[0]
             pose = self.arm.pose()
             tilt = s.tilt_from(pose[3:])
             if tilt > 2.0:
@@ -518,7 +592,8 @@ class Session(Sight):
                 self.spots.grasp(dst)
                 if dst == self.thing_at:
                     raise Refused("the thing is already there")
-            self.job = dict(steps=[], i=None, waiting=False, outcome=None, done=0, total=count, src=self.thing_at, dst=dst, rehearse=bool(rehearse), step=bool(step), fixed=dst, kind="move")
+            self.job = dict(steps=[], i=None, waiting=False, outcome=None, done=0, total=count, src=self.thing_at, dst=dst, rehearse=bool(rehearse), step=bool(step), fixed=dst, kind="move",
+                            task=f"move the block from spot {self.thing_at} to spot {dst}" if dst is not None and count == 1 else "move the block from spot to spot")
             self._next.clear()
             self.worker = threading.Thread(target=self._work, daemon=True)
             self.worker.start()
@@ -562,7 +637,8 @@ class Session(Sight):
                 self.arm.holding = None
                 self.arm.bricks = {**{f: sp.grasp(f).copy() for f in feeds[n_now:]}, **{f: sp.grasp(on) + k * h * sp.up for k, f in enumerate(feeds[:n_now])}}
             self.job = dict(steps=[], i=None, waiting=False, outcome=None, done=0, total=len(legs), src=legs[0]["src"], dst=legs[0]["dst"], rehearse=bool(rehearse), step=bool(step),
-                            fixed=None, kind="move", legs=legs, spots=sp, text=legs[0]["text"], tower=True)
+                            fixed=None, kind="move", legs=legs, spots=sp, text=legs[0]["text"], tower=True,
+                            task=dict(build="stack the blocks into a tower", down="take the tower apart and put every block back on its spot", loop="build a tower and take it apart again")[what])
             self._next.clear()
             self.worker = threading.Thread(target=self._work, daemon=True)
             self.worker.start()
@@ -583,14 +659,8 @@ class Session(Sight):
             else:
                 self.thing_at = None
 
-        def before(s):
-            job["i"] = next((i for i, x in enumerate(job["steps"]) if x is s), job["i"])
-            if job["step"]:
-                job["waiting"] = True
-                while not self._next.wait(0.05):
-                    g._check_abort()
-                self._next.clear()
-                job["waiting"] = False
+        before = self._before(job, g)
+        self._ep_begin(job.get("task") or job.get("text") or "move the block to another place", kind="spots", rehearse=job["rehearse"])
 
         outcome = "done"
         try:
@@ -605,6 +675,7 @@ class Session(Sight):
                 with self.lock:
                     job.update(steps=steps, i=None, src=at, dst=dst, text=text)
                 self.say(f"move {k + 1} of {job['total']}: {text}" + (" (rehearsal in the air)" if job["rehearse"] else ""))
+                self._mark("leg", text=text, src=at, dst=dst)
                 if leg.get("first"):
                     leg["first"]()
                 rec = execute(g, steps, self.P, air=job["rehearse"], before=before)
@@ -647,14 +718,276 @@ class Session(Sight):
                 pass
             raise
         finally:
-            latched = g.latched
-            with self.lock:
-                job["outcome"], job["i"], job["waiting"], self.worker = outcome, None, False, None
+            self._wrap_up(job, g, outcome)
+
+    def _before(self, job, g):
+        """What runs before every step of a job: the page is told which step it is, the recorder too, and in step
+        mode the step waits for its button."""
+        def before(s):
+            job["i"] = next((i for i, x in enumerate(job["steps"]) if x is s), job["i"])
+            self._mark("step", name=s["name"], what=s["kind"])
+            if job["step"]:
+                job["waiting"] = True
+                while not self._next.wait(0.05):
+                    g._check_abort()
+                self._next.clear()
+                job["waiting"] = False
+
+        return before
+
+    def _wrap_up(self, job, g, outcome):
+        """The end of every job, however it ended."""
+        latched = g.latched
+        self._ep_end(outcome, success=outcome == "done" and not job.get("rehearse"))  # a job that keeps its own episodes has ended them already
+        with self.lock:
+            job["outcome"], job["i"], job["waiting"] = outcome, None, False
+            if self.worker is threading.current_thread():  # not a worker that outlived its session: that one touches nothing
+                self.worker = None
                 if outcome.startswith("stopped") and self.gate is not None:
                     self.gate.armed = self.teaching = False
-            self.say(f"ended: {outcome}")
-            if latched:
-                threading.Thread(target=self.end, args=(latched,), daemon=True).start()
+        self.say(f"ended: {outcome}")
+        if latched:
+            threading.Thread(target=self.end, args=(latched,), daemon=True).start()
+
+    def _begin_job(self, text, body, step=False, tower=False):
+        """Start a job whose legs are not known beforehand: `body(job, guard)` runs in the worker's thread, plans as
+        it goes and returns how it ended."""
+        self.job = dict(steps=[], i=None, waiting=False, outcome=None, done=0, total=0, src=None, dst=None, rehearse=False, step=bool(step), fixed=None, kind="move",
+                        text=text, tower=bool(tower))
+        self._next.clear()
+        self.say(text)
+        self.worker = threading.Thread(target=self._task, args=(self.job, body), daemon=True)
+        self.worker.start()
+
+    def _task(self, job, body):
+        g, outcome = self.guard, "done"
+        try:
+            outcome = body(job, g) or "done"
+        except NothingHeld as e:
+            outcome = f"{e}. Look at the table"
+        except Released as e:
+            outcome = f"stopped: {e}"
+        except (ArmFault, Refused) as e:
+            outcome = f"{type(e).__name__}: {e}"
+        except Exception as e:  # noqa: BLE001  a mistake in the program itself: stop the arm and say so, never report "done"
+            outcome = f"stopped: the program failed ({type(e).__name__}: {e})"
+            try:
+                self.arm.stop()
+            except Exception:  # noqa: BLE001
+                pass
+            raise
+        finally:
+            if self.stack is not None and not outcome.startswith("done"):
+                self.stack = {**self.stack, "of": None}
+            self._wrap_up(job, g, outcome)
+
+    # ------------------------------------------------------------------ the recorder (a no-op without one)
+    def _arm_row(self, arm, guard=None):
+        """One arm as the recorder writes it down: only what its controller publishes anyway."""
+        doing = guard.doing if guard is not None else None
+        grip = guard.counts if guard is not None and guard.counts is not None else getattr(arm, "counts", None)
+        return dict(joints=[round(float(v), 3) for v in arm.joints_view()], xyz=[round(float(v), 2) for v in arm.xyz_now()], rpy=[round(float(v), 3) for v in arm.rpy_now()],
+                    grip=None if grip is None else int(grip), moving=bool(arm.moving_now()), goal_xyz=None if doing is None else doing["goal"],
+                    goal_grip=None if guard is None or guard.asked is None else int(guard.asked), what="" if doing is None else doing["what"])
+
+    def _side(self, key):
+        """Under which name an arm is written down: the stand-in arm stands in for the right one (the episode says so)."""
+        return key if key in ("right", "left") else "right"
+
+    def _sample(self):
+        arm, job = self.arm, self.job or {}
+        if arm is None:
+            return {}
+        arms = {self._side(self.chosen): self._arm_row(arm, self.guard)}
+        if self.other is not None:
+            try:
+                arms[self._side(self.other_side)] = self._arm_row(self.other)
+            except Exception:  # noqa: BLE001  the other arm is only watched
+                pass
+        i, steps = job.get("i"), job.get("steps") or []
+        return dict(arms=arms, held=bool(self.gate.held()) if self.gate is not None else False, phase=self.phase(), step=steps[i]["name"] if i is not None and i < len(steps) else "",
+                    leg=job.get("text") or "", waiting=bool(job.get("waiting")))
+
+    def _rec_frames(self):
+        if self.feeds is None or self.feeds.why_not():
+            return []
+        return self.feeds.latest([k for k in (self.chosen, self.other_side) if k])
+
+    def set_recording(self, on):
+        """Whether the jobs from now on are recorded (pictures, joints and what was asked, ten times a second)."""
+        with self.lock:
+            self.recording = bool(on)
+            self.say("jobs are recorded from now on" if self.recording else "jobs are NOT recorded from now on")
+
+    def judge(self, good):
+        """A person's word on the episode that was recorded last: did it do what its task says?"""
+        from .record import episodes
+
+        eps = episodes(self.log_root)
+        if not eps or (self.rec is not None and self.rec.active):
+            raise Refused("there is no finished episode to judge")
+        path = eps[-1] / "episode.json"
+        meta = json.loads(path.read_text())
+        meta["success"], meta["judged_by"] = bool(good), "a person"
+        path.write_text(json.dumps(meta, indent=1))
+        self.say(f"episode {eps[-1].name} is marked as " + ("a success" if good else "a failure"))
+
+    # ------------------------------------------------------------------ the other arm (see `pair`)
+    def _other_key(self, key=None):
+        key = key or self.chosen
+        other = {"right": "left", "left": "right"}.get(key)
+        return other if other in self.arms else None
+
+    def rig(self):
+        """How the two arms stand to each other (`rig.json`: the left arm's base in the right arm's), or None."""
+        if not self.rig_path.exists():
+            return None
+        from .pair import Frame
+
+        try:
+            return Frame.from_dict(json.loads(self.rig_path.read_text())["left_in_right"])
+        except (OSError, ValueError, KeyError, TypeError, AttributeError, Refused):
+            return None
+
+    def _other_in_mine(self, key=None):
+        frame, key = self.rig(), key or self.chosen
+        if frame is None:
+            return None
+        return frame if key == "right" else frame.inverse()
+
+    def _watch_other(self):
+        """At the start of a session: if the two arms' places are known and the other arm answers, connect to it READ
+        ONLY (it is never enabled or moved from here) and have the guard keep this arm away from it."""
+        self.other, self.other_side, self.watch = None, None, None
+        key, frame = self._other_key(), self._other_in_mine()
+        if key is None:
+            return
+        if frame is None:
+            self.say(f"the {self.arms[key]['label'].lower()} is NOT watched (the arms have not been fitted to each other): keep it out of the way")
+            return
+        spec = self.arms[key]
+        if spec.get("ip") is not None and not self.probe(spec["ip"]):
+            self.say(f"the {spec['label'].lower()} does not answer and is NOT watched: keep it out of the way")
+            return
+        try:
+            other = spec["make"]()
+            other.connect()
+        except Exception as e:  # noqa: BLE001
+            self.say(f"the {spec['label'].lower()} is NOT watched ({type(e).__name__}: {e}): keep it out of the way")
+            return
+        from .pair import Watch
+
+        def joints(arm):
+            def read():
+                if not getattr(arm, "connected", True):
+                    raise ArmFault("the arm is not connected")
+                return arm.joints_view()
+
+            return read
+
+        self.other, self.other_side = other, key
+        self.watch = Watch(joints(self.arm), joints(other), frame, other_step_mm=0.0)  # nothing here moves the other arm; that it stays put is checked at every poll
+        self.say(f"the {spec['label'].lower()} is watched (read only): this arm keeps {self.watch.stop_mm:.0f} mm away from it")
+
+    def pair_fit(self):
+        """Fit the two arms to each other from spots that were taught with BOTH arms at the same marks on the table,
+        under the same names (the fingertips touching the mark, the gripper pointing straight down). Kept in
+        `rig.json`. Moves nothing."""
+        from . import pair
+
+        with self.lock:
+            got = {side: self._saved_spots(side) for side in ("right", "left")}
+            for side, g in got.items():
+                if g is None:
+                    raise Refused(f"no spots were saved with the {side} arm: teach the marks with it first")
+            R, L = got["right"][0], got["left"][0]
+            names = sorted(set(R.at) & set(L.at))
+            if len(names) < 4:
+                raise Refused(f"the two arms share only {len(names)} spot names: teach at least 4 marks (better 5 or more) with both arms, under the same names")
+            tip = lambda s, n: pair.fingertip(np.r_[s.at[n], s.turn(n)])  # noqa: E731
+            frame = pair.fit_frames([tip(L, n) for n in names], [tip(R, n) for n in names], names=names)
+            off = pair.check_against_mounts(frame, self.arms["left"].get("down", (0.0, 0.0, -1.0)), self.arms["right"].get("down", (0.0, 0.0, -1.0)))
+            frame.when = time.time()
+            self.rig_path.write_text(json.dumps(dict(left_in_right=frame.to_dict()), indent=1))
+            self.say(f"the arms are fitted to each other from {len(names)} marks, within {frame.rms_mm:.1f} mm ({off:.1f} deg from what the mounts say). Kept in {self.rig_path}")
+            return frame
+
+    def use_other(self):
+        """Take the OTHER arm's spots, and the camera as it was shown the table with the other arm, carried over into
+        this arm's own frame (no teaching and no showing again). The arm must be over those spots, turned as they
+        need. Rehearse in the air first: nothing checks that this arm can reach every place."""
+        from . import pair
+
+        with self.lock:
+            self._teach("using the other arm's spots")
+            key, frame = self._other_key(), self._other_in_mine()
+            if key is None or frame is None:
+                raise Refused("the arms have not been fitted to each other yet")
+            got = self._saved_spots(key)
+            if got is None:
+                raise Refused(f"no spots were saved with the {key} arm")
+            s = pair.spots_in(frame, got[0], self.chosen).check()
+            pose = self.arm.pose()
+            tilt = s.tilt_from(pose[3:])
+            if tilt > 2.0:
+                raise Refused(f"the gripper is tilted {tilt:.1f} deg away from how those spots need it: point it straight down first")
+            if s.limits().why_outside(pose[:3]):
+                raise Refused("the arm is not over those spots: nudge it there")
+            self._adopt(s)
+            self._keep_spots(s)
+            line = ""
+            cam = self._file(self.camera_path, key)
+            if cam.exists():
+                try:
+                    eyes = self._eyes()
+                    self.setup = pair.setup_in(frame, eyes.Setup.load(cam), self.chosen)
+                    self._keep_setup(self.setup)
+                    line = f", and the camera as the {key} arm showed it the table"
+                except Exception as e:  # noqa: BLE001
+                    line = f" (the camera was not carried over: {type(e).__name__}: {e})"
+            self.say(f"ARMED with the {key} arm's spots {', '.join(sorted(s.at))}{line}. REHEARSE IN THE AIR FIRST: they were never reached with this arm")
+
+    def pair_state(self):
+        """For the page: are the arms fitted to each other, is the other one watched, and how near is it?"""
+        out = dict(fitted=self.rig_path.exists(), watched=self.watch is not None, other=self.other_side, mm=None, part=None, why="")
+        if self.watch is not None:
+            try:
+                mm, mine, theirs = self.watch.mm()
+                out.update(mm=round(float(mm)), part=f"{mine} / {theirs}")
+            except Exception as e:  # noqa: BLE001
+                out["why"] = str(e)
+        return out
+
+    def _ep_begin(self, task, **meta):
+        rec = self.rec
+        if rec is not None and self.recording and not rec.active:
+            try:
+                rec.begin(task, arm=self.chosen, fake=self.fake, **meta)
+            except Exception as e:  # noqa: BLE001  recording must never stop a job
+                self.say(f"not recording: {type(e).__name__}: {e}")
+
+    def _ep_end(self, outcome, success=None, **kw):
+        rec = self.rec
+        if rec is not None and rec.active:
+            try:
+                rec.end(outcome, success=success, **kw)
+            except Exception as e:  # noqa: BLE001
+                self.say(f"the recording was not closed properly: {type(e).__name__}: {e}")
+            self._rest_cameras()
+
+    def _rest_cameras(self):
+        """The recorder no longer needs the cameras: they are let go unless the page is showing them."""
+        kept = getattr(self.feeds, "kept", None)
+        if kept is not None:
+            kept.clear()
+
+    def _mark(self, kind, **kw):
+        rec = self.rec
+        if rec is not None and rec.active:
+            try:
+                rec.mark(kind, **kw)
+            except Exception:  # noqa: BLE001
+                pass
 
     # ------------------------------------------------------------------ what the dashboard draws (nothing here moves or judges anything)
     def view(self):
@@ -767,6 +1100,7 @@ class Session(Sight):
                        calibration=dict(teaching=self.teaching, done=self.calibrated, spots=spots, lift_mm=None if sp is None else sp.lift, saved=self.saved(), note=self.note,
                                         busy=bool(self.teaching and self.worker is not None)),
                        thing_at=self.thing_at, log=list(self.lines)[-40:], stack=self.stack, drop_mm=self.P.drop_mm, eye=self.sight_state(),
+                       pair=self.pair_state(), rec=dict(on=self.recording, **(self.rec.stats() if self.rec is not None else {})), check_width=self.check_width,
                        job=None if j is None or j.get("kind") != "move" else dict(steps=[x["name"] for x in j["steps"]], i=j["i"], waiting=j["waiting"], outcome=j["outcome"], done=j["done"],
                                                                                   total=j["total"], src=j["src"], dst=j["dst"], rehearse=j["rehearse"], text=j.get("text")))
             if self.connected:

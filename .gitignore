@@ -2,7 +2,10 @@
 assembly_logs/
 brickloop_logs/
 spots.json
+spots.*.json
 camera.json
+camera.*.json
+rig.json
 blocks.json
 look.jpg
 plate*.json

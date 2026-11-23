@@ -26,6 +26,7 @@ round trip; they are read between segments, when the arm is at rest (`lag_mm`).
 """
 from __future__ import annotations
 
+import threading
 import time
 
 import numpy as np
@@ -109,8 +110,6 @@ def _rz(deg):
 
 def run_fake_clock(arm, scale=1.0, alive=lambda: True):
     """Let a stand-in arm move in real time (a background thread, until `alive()` says no)."""
-    import threading
-
     def loop():
         last = time.monotonic()
         while alive():
@@ -144,9 +143,17 @@ class FakeArm:
         self.j7, self.j7_real, self.turn_target, self.turn_speed = 0.0, 0.0, None, 0.0  # the last joint: planned, measured, where it is going
         self.turn_sign, self.turn_stuck = 1.0, False  # which way the gripper spins for +joint 7; a gripper that is held and cannot turn
         self.tilt, self.swing_deg = None, 0.0  # a tilt under way: [wanted rpy, seconds left]; how far a joint jumps during one (to try the guard)
+        self._step, self._draw = threading.Lock(), threading.Lock()
+        self.angles, self._held_R = {}, None  # name -> how far [deg, about `up`] that brick has been turned since it was first taken
+        self.widths = {}  # name -> the counts the jaws stall at on that brick (BRICK_COUNTS for one that is not named here)
+        self.pushes, self.push_mm = False, 26.0  # closed jaws at a brick's height shove it along: no brick's middle stays nearer to them than `push_mm`
 
     # --- simulated time
     def advance(self, dt):
+        with self._step:  # nobody reads "where it is" against "where it is planned to be" half way through a step
+            self._advance(dt)
+
+    def _advance(self, dt):
         self.t += dt
         if self.fault_when is not None and not self.err:
             self.err = int(self.fault_when(self) or 0)
@@ -176,6 +183,16 @@ class FakeArm:
             self.p = self.plan.copy()
         if self.holding is not None:
             self.bricks[self.holding[0]] = self.p + self.holding[1]
+        elif self.pushes and self.counts < 50:
+            for name, at in self.bricks.items():
+                off = at - self.p
+                high = float(off @ self.up)
+                flat = off - high * self.up
+                near = float(np.linalg.norm(flat))
+                if abs(high) <= 15.0 and near < self.push_mm:  # shoved away from the jaws (straight ahead if they are exactly on it)
+                    away = flat / near if near > 1e-6 else d / max(dist, 1e-9)
+                    away = away - (away @ self.up) * self.up
+                    self.bricks[name] = self.p + high * self.up + away / max(float(np.linalg.norm(away)), 1e-9) * self.push_mm
 
     # --- the interface
     def connect(self):
@@ -205,7 +222,8 @@ class FakeArm:
         return self.plan.copy()
 
     def lag_mm(self):
-        return self.p - self.plan
+        with self._step:
+            return self.p - self.plan
 
     def joints(self, measured=True):
         return [0.0] * 6 + [self.j7_real if measured else self.j7]
@@ -244,8 +262,11 @@ class FakeArm:
     def joints_view(self):
         """Joint angles for the page's model of the arm (the stand-in has none of its own: a posture that reaches its
         pose is worked out, starting from the last one so that the model moves smoothly)."""
-        self._view = joints_for(self.p, rpy_matrix(self.rpy), getattr(self, "_view", None))
-        return [float(v) for v in self._view]
+        with self._draw:  # the page and the recorder both ask: one posture is worked out at a time, and not twice for one pose
+            key = (*np.round(self.p, 3), *np.round(self.rpy, 3))
+            if getattr(self, "_view_key", None) != key:
+                self._view, self._view_key = joints_for(self.p, rpy_matrix(self.rpy), getattr(self, "_view", None)), key
+            return [float(v) for v in self._view]
 
     def moving_now(self):
         return (self.target is not None or self.turn_target is not None or self.tilt is not None) and not self.paused and not self.stopped
@@ -265,13 +286,18 @@ class FakeArm:
     def grip(self, counts):
         self.log.append(("grip", self.t, int(counts)))
         if counts >= 800:  # open: a held brick stays where it is
+            if self.holding is not None and self._held_R is not None:  # ... turned as far as the gripper was turned while it held it
+                Q = rpy_matrix(self.rpy) @ self._held_R.T
+                e = np.cross(self.up, [1.0, 0.0, 0.0] if abs(self.up[0]) < 0.9 else [0.0, 1.0, 0.0])
+                e = e / np.linalg.norm(e)
+                self.angles[self.holding[0]] = self.angles.get(self.holding[0], 0.0) + float(np.degrees(np.arctan2(self.up @ np.cross(e, Q @ e), e @ (Q @ e))))
             self.counts, self.holding = int(counts), None
             return self.counts
         for name, at in self.bricks.items():
             off = at - self.p
             high = float(off @ self.up)  # the jaws must be at the brick's height, and within reach along the plate
             if abs(high) <= 3.0 and float(np.linalg.norm(off - high * self.up)) <= 20.0:
-                self.holding, self.counts = (name, off), self.BRICK_COUNTS
+                self.holding, self.counts, self._held_R = (name, off), int(self.widths.get(name, self.BRICK_COUNTS)), rpy_matrix(self.rpy)
                 return self.counts
         self.counts = int(counts)
         return self.counts
@@ -295,12 +321,18 @@ class XArm:
             time.sleep(0.05)
             if any(abs(float(v)) > 1e-6 for v in (self.api.angles or [0.0])):
                 return
+        self.disconnect()  # not left behind with its sockets and threads
         raise ArmFault("the arm is connected but publishes no state")
 
     def disconnect(self):
         if self.api is not None:
             self.api.disconnect()
             self.api = None
+
+    @property
+    def connected(self):
+        """Is the controller still being heard? (The SDK goes on giving the last angles of an arm it has lost.)"""
+        return bool(self.api is not None and getattr(self.api, "connected", False))
 
     def _ok(self, code, what):
         if code != 0:
@@ -413,7 +445,10 @@ class XArm:
         last, still, t0 = None, 0, time.monotonic()
         while time.monotonic() - t0 < 4.0:
             time.sleep(0.1)
-            code, pos = self.api.get_gripper_position()
+            got = self.api.get_gripper_position()
+            if not isinstance(got, (tuple, list)) or len(got) != 2:  # a gripper fault: the SDK answers with a bare code
+                raise ArmFault(f"the gripper did not answer properly ({got!r})")
+            code, pos = got
             if code != 0 or pos is None:
                 continue
             still = still + 1 if (last is not None and abs(pos - last) <= 2) else 0
@@ -427,7 +462,8 @@ class XArm:
     def status(self):
         err, warn = self._err_warn()
         _, state = self.api.get_state()
-        code, grip = self.api.get_gripper_position()
+        got = self.api.get_gripper_position()
+        code, grip = got if isinstance(got, (tuple, list)) and len(got) == 2 else (-1, None)
         return dict(error=err, warn=warn, state=int(state), mode=int(getattr(self.api, "mode", -1)), pose=self.pose().round(2).tolist(),
                     joints_planned=[round(v, 3) for v in self.joints(False)], joints_measured=[round(v, 3) for v in self.joints(True)],
                     gripper=None if code != 0 else grip, tcp_load=getattr(self.api, "tcp_load", None),

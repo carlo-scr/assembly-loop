@@ -59,7 +59,7 @@ label.chk{display:flex;align-items:center;gap:6px;font-size:12.5px;white-space:n
 label.mini{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--mute);white-space:nowrap}
 label.mini.col{flex-direction:column;align-items:stretch;gap:3px;flex:1;min-width:86px}
 label.mini.narrow{flex:.6;min-width:64px}label.mini.tiny{flex:.35;min-width:54px}
-label.mini input{width:64px}label.mini.col input,label.mini.col select{width:100%}
+label.mini input{width:64px}label.mini input.tick{width:auto}label.mini.col input,label.mini.col select{width:100%}
 #spotname{width:64px}
 .field{display:flex;flex-direction:column;gap:3px;flex:1}.field>label{font-size:12px;color:var(--mute)}
 .seg{display:flex;align-items:center;background:var(--bg);border:1px solid var(--line);border-radius:9px;padding:2px;gap:2px}
@@ -68,7 +68,7 @@ label.mini input{width:64px}label.mini.col input,label.mini.col select{width:100
 .seg em{font-style:normal;color:var(--faint);font-size:12px;padding:0 8px 0 4px}
 .seg.small button{padding:3px 9px;font-size:12px}
 .tabs{display:flex;gap:2px;background:var(--bg);border:1px solid var(--line);border-radius:9px;padding:2px}
-.tabs button{border:0;background:transparent;padding:5px 14px;border-radius:7px;color:var(--mute)}.tabs button.on{background:var(--btnh);color:var(--ink)}
+.tabs button{border:0;background:transparent;padding:5px 9px;border-radius:7px;color:var(--mute)}.tabs button.on{background:var(--btnh);color:var(--ink)}
 .chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 .chip{display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:999px;border:1px solid var(--line);font-size:12px;background:var(--card2);max-width:100%}
 .chip.y b{color:var(--ok)}.chip.n{border-color:var(--no)}.chip.n b{color:var(--no)}.chip small{color:var(--mute)}
