@@ -250,6 +250,12 @@ def test_blocks_within_reach_of_the_jaws_of_one_another_are_marked_crowded():
     assert sorted(s.kind.name for s in seen if s.crowded) == ["blue cube", "red bar"]
     seen, _, _ = look(picture(cam, near), cam, TABLE, CAT, clear_mm=5.0)
     assert not any(s.crowded for s in seen)
+    im = picture(cam, near[::2])
+    at = cam.project([TABLE.point(-60.0, 450.0 + 12.7 + 14.0, TABLE.w0), TABLE.point(100.0, 440.0, TABLE.w0)]).astype(int)
+    cv2.circle(im, tuple(int(v) for v in at[0]), 13, (170, 60, 150), -1)  # something purple, which no block is, 14 mm beside the bar
+    cv2.circle(im, tuple(int(v) for v in at[1]), 13, (170, 60, 150), -1)  # and another far from everything
+    seen, unknown, _ = look(im, cam, TABLE, CAT)
+    assert len(unknown) == 2 and [(s.kind.name, s.crowded) for s in sorted(seen, key=lambda s: s.uv[0])] == [("red bar", True), ("green cube", False)]  # what was not made out is in the way too
 
 
 def test_a_block_partly_behind_one_of_another_colour_is_still_found_where_it_is():
@@ -293,7 +299,7 @@ def test_the_camera_is_fitted_twice_and_the_second_time_is_kept_only_if_it_is_no
     cam, bar = camera((1280, 720)), CAT.kind("green bar")
     rng = np.random.default_rng(3)
     places = [(u + rng.uniform(-8, 8), v + rng.uniform(-8, 8)) for u in (-150.0, -50.0, 50.0, 150.0) for v in (350.0, 480.0, 610.0)]
-    pictures = [picture(cam, [("green bar", 0, u, v, 30.0)], seed=i) for i, (u, v) in enumerate(places)]
+    pictures = [picture(cam, [("green bar", 0, u, v, 30.0)], seed=i, white=(0.9, 1.0, 1.1)) for i, (u, v) in enumerate(places)]
     xyz = [TABLE.point(u, v, TABLE.w0 + 12.7) for u, v in places]
     twice, line = settle(xyz, pictures, bar, np.eye(3), np.zeros(3))
     once, _ = settle(xyz, pictures, bar, np.eye(3), np.zeros(3), refine=False)

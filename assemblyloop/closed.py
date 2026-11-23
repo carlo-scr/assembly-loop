@@ -109,15 +109,16 @@ def fingers(b, angle_deg, jaw_mm):
     return [rect(np.asarray(b.uv, float) + s * out * across, angle_deg, FINGER_MM[0], FINGER_MM[1]) for s in (1.0, -1.0)]
 
 
-def in_the_way(b, angle_deg, others, jaw_mm, clear_mm=3.0):
-    """The blocks a finger would come down on if `b` were taken from `angle_deg`."""
-    fs = fingers(b, angle_deg, opening(b, jaw_mm))
+def in_the_way(b, angle_deg, others, jaw_mm, clear_mm=3.0, full=False):
+    """The blocks a finger would come down on if `b` were taken from `angle_deg`. `full`: with the jaws all the way
+    open (as the build that looks only once opens them), not just as wide as the block needs."""
+    fs = fingers(b, angle_deg, jaw_mm if full else opening(b, jaw_mm))
     return [o for o in others if o is not b and any(rects_touch(f, footprint(o, clear_mm)) for f in fs)]
 
 
-def jaws_room(b, others, jaw_mm):
+def jaws_room(b, others, jaw_mm, full=False):
     """From which direction the jaws have room beside this block, or None if from none."""
-    return next((a for a in grasp_angles(b) if not in_the_way(b, a, others, jaw_mm)), None)
+    return next((a for a in (grasp_angles(b)[:1] if full else grasp_angles(b)) if not in_the_way(b, a, others, jaw_mm, full=full)), None)
 
 
 def push_clear(b, others, jaw_mm, inside, slide_mm=60.0):
@@ -418,6 +419,9 @@ class Closed:
                 pushes += 1
                 self._push(job, g, setup, levels, line, f"push the {b.name} clear of its neighbour")
                 continue
+            if getattr(b, "margin", 1.0) < 0.05:  # the camera could read it another way: the jaws' width will tell
+                self.say(f"the camera is not sure how the {b.name} lies ({getattr(b, 'rival', '') or 'it could be read another way'})")
+                self._mark("unsure", name=b.name, rival=getattr(b, "rival", ""))
             hold = plan[0]["hold_mm"]
             aim = base if not levels else (base + np.array(levels[-1].get("seen_uv", levels[-1]["uv"]))) / 2.0  # half way back to the tower's own axis
             if float(np.hypot(*(aim - base))) > 15.0:

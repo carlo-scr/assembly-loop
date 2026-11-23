@@ -1,8 +1,8 @@
 """Eyes: one fixed camera that looks at the table, and what it makes of the blocks on it. Nothing here moves the arm.
 
   1. `grab` takes one picture.
-  2. `find_blobs` cuts out everything strongly coloured (painted blocks on a grey mat), one blob per patch of one
-     colour. Two blocks of one colour that touch are one blob and are not made out: keep blocks apart.
+  2. `find_blobs` cuts out everything painted: what is plainly more colourful than the mat is in this very picture,
+     one blob per patch of one paint, mended where a lamp shines in it.
   3. A `Camera` says where in the picture a point of the table shows. It is fitted (`calibrate`) to pairs of
      "this point of the table showed here in the picture", which the arm makes itself by putting one block down in
      a dozen places.
@@ -10,6 +10,15 @@
      that block would have in the picture and shifts and turns it until it covers the blob. The best cover names the
      block and says where its middle is and which way it points. This is what makes a camera that looks at the table
      from the side usable: a tall block's outline is its top AND its sides, and only the drawn solid accounts for that.
+     Where two ways to lie give nearly the same outline (a bar on its end, or lying towards the camera), the borders
+     between the block's light and dark faces decide, and `Seen.margin` says how close it was.
+  5. `make_out_all` does the same with two or three blocks at once where one does not explain a blob: blocks of one
+     colour that touch are one blob, and are made out together if their outlines together cover it. Such blocks, and
+     any that lie within reach of the jaws of one another, are marked `crowded`: push them apart before taking one.
+
+What it still cannot do: tell two blocks lying flush side by side from one larger block when nothing but their
+common outline shows; see a block that is mostly hidden; see anything that is not on the table (a block on a block).
+All of it has only ever seen made-up pictures (`tests/test_eyes_hard.py` draws the harshest of them).
 
 Lengths are millimetres. Points are in the arm's base frame, shifted along the gripper's axis so that a block stands
 where the gripper goes to hold it (see `Table`): the camera is fitted to where the ARM put a block, so everything
@@ -81,6 +90,9 @@ def steady(pictures):
 
 
 # ---------------------------------------------------------------------------------------------------- blobs
+EDGE = 0.42  # the rim of a blob is where the colour is this far from the mat's towards the blob's own (a little under half: a dark face next to a bright mat fades early)
+
+
 @dataclass
 class Blob:
     colour: str
@@ -139,7 +151,8 @@ def _mat(hsv, region):
     mv = float(np.median(v))
     if region is None and ms >= 90.0:
         return None  # nothing here is as dull as a mat: no telling what the paint should stand out from
-    return float(ms), float(ms - p10) / 0.76, mv, 1.4826 * float(np.median(np.abs(v - mv)))
+    spread = min(float(ms - p10) / 0.76, 1.4826 * float(np.median(np.abs(s - np.median(s)))))  # the smaller of two guesses: neither a stained mat nor a block in the way widens it
+    return float(ms), spread, mv, 1.4826 * float(np.median(np.abs(v - mv)))
 
 
 def _hue_groups(hist, floor=0.04, gap=4):
@@ -257,11 +270,11 @@ def find_blobs(bgr, region=None, s_min=None, v_min=None, hues=None, colours=None
                 core = (clab == j) & mine
                 if core.sum() < least:
                     continue
-                if mat is not None:  # its edge is where the colour is half-way between the mat's and its own, whatever its own is
+                if mat is not None:  # its rim is put by its own colour (`EDGE`), not by the threshold that found it: pale paint and strong paint get rims as true
                     own = float(np.median(sat_of[core]))
                     if own < s_thr + 0.16 * (255.0 - ms):
                         continue  # a stain: more colourful than the mat, but not paint
-                    fine = cv2.morphologyEx((core & (sat_of >= ms + 0.5 * (own - ms))).astype(np.uint8), cv2.MORPH_OPEN, box).astype(bool)
+                    fine = cv2.morphologyEx((core & (sat_of >= ms + EDGE * (own - ms))).astype(np.uint8), cv2.MORPH_OPEN, box).astype(bool)
                     core = fine if fine.sum() >= max(least, 0.6 * core.sum()) else core
                 pieces.append((mid, core, (clab == j) & near & ~core))
         for j, (mid, core, lit) in enumerate(pieces):
@@ -482,7 +495,7 @@ def settle(xyz, pictures, kind, axes, rpy_ref, extra_uv=(), side="right", refine
     rest = kind.rests()[0]
     if not rest.turns:
         raise Refused("show the camera the table with a bar or a slab: a cylinder on its end has no direction")
-    per = [[b for b in find_blobs(im) if (kind.colour is None or b.colour == kind.colour) and not b.cut] for im in pictures]
+    per = [[b for b in find_blobs(im, colours={kind.colour} if kind.colour else None) if (kind.colour is None or b.colour == kind.colour) and not b.cut] for im in pictures]
     near, found = 0.012 * pictures[0].shape[1], []
     for i, (p, blobs) in enumerate(zip(xyz, per)):
         # the block is the one patch that is somewhere else in the other pictures: what stays put is not the block
@@ -943,7 +956,8 @@ def make_out(blob, cam, table, cat, good=0.80, hidden=None, picture=None):
 def look(bgr, cam, table, cat, region=None, clear_mm=30.0, hues=None, most=3):
     """Everything the camera makes of one picture: (blocks seen, [(blob, why it was not made out)], blobs).
     Blocks that touch are made out together where that explains their blob (up to `most` in one blob); a seen
-    block with another within `clear_mm` of it is marked `crowded` (see `crowd`). `hues`: see `colour_of`."""
+    block with another within `clear_mm` of it is marked `crowded` (see `crowd`), and so is one with something
+    that was not made out showing that near to where it stands. `hues`: see `colour_of`."""
     cam = cam.scaled((bgr.shape[1], bgr.shape[0]))
     glare = []
     blobs = find_blobs(bgr, region, hues=hues, colours={k.colour for k in cat.kinds if k.colour}, glare=glare)
@@ -957,6 +971,17 @@ def look(bgr, cam, table, cat, region=None, clear_mm=30.0, hues=None, most=3):
         if not found:
             unknown.append((b, why))
     crowd(seen, clear_mm)
+    for s in seen:  # what was not made out is in the way all the same: a seen block is crowded if such a thing shows within reach of it
+        if not s.crowded and unknown:
+            a = np.radians(s.angle)
+            al, ac = (s.rest.long / 2 + clear_mm) * np.array([np.cos(a), np.sin(a)]), (s.rest.short / 2 + clear_mm) * np.array([-np.sin(a), np.cos(a)])
+            around = cam.project([table.point(*(np.array(s.uv) + i * al + j * ac), table.w0) for i, j in ((-1, -1), (1, -1), (1, 1), (-1, 1))])
+            for b, _ in unknown:
+                ys, xs = np.nonzero(b.mask)
+                step = max(1, len(xs) // 400)
+                if any(cv2.pointPolygonTest(around.astype(np.float32).reshape(-1, 1, 2), (float(b.x0 + x), float(b.y0 + y)), False) >= 0 for x, y in zip(xs[::step], ys[::step])):
+                    s.crowded = True
+                    break
     return name_all(seen), unknown, blobs
 
 

@@ -122,7 +122,7 @@ function render(s) {
   $("rec_good").disabled = $("rec_bad").disabled = !!r.active || !(r.last && r.last.id);
   $("pair_note").textContent = pr.watched ? (pr.mm != null ? `Other arm ${pr.mm} mm away (${pr.part})` : `Other arm NOT READABLE: ${pr.why}`) : (pr.fitted ? "Other arm not watched" : "Arms not fitted to each other");
   $("pair_use").disabled = !(ph === "AWAITING CALIBRATION" && pr.fitted);
-  once("seen", g ? [g.t, g.stale] : null, () => { $("e_seen").replaceChildren(...(g ? g.seen.map(b => chip("✓", "y", b.name, `${b.lies}, fits ${b.fit}%`)).concat(g.unknown.map(w => chip("?", "n", "not made out", w))) : [])); });
+  once("seen", g ? [g.t, g.stale] : null, () => { $("e_seen").replaceChildren(...(g ? g.seen.map(b => chip(b.unsure || b.crowded ? "~" : "✓", "y", b.name, `${b.lies}, fits ${b.fit}%` + (b.crowded ? ", lies against something" : "") + (b.unsure ? `, could also be: ${b.unsure}` : ""))).concat(g.unknown.map(w => chip("?", "n", "not made out", w))) : [])); });
   const plan = !g ? "" : ((g.stale ? "This picture is from before the last move: press Look again. " : "") + (g.order.length ? `Tower, bottom first: ${g.order.join(", ")} (${g.height_mm} mm high).` : "Nothing in this picture can go onto a tower.") + (g.left_out.length ? " Left out: " + g.left_out.join("; ") + "." : ""));
   $("e_plan").textContent = plan; $("e_plan").title = plan;
   lookTile(g);

@@ -114,7 +114,7 @@ class Sight:
         eyes = self._eyes()
         tall = max(r.height for k in cat.kinds for r in k.rests())
         region = setup.region((im.shape[1], im.shape[0]), tall)
-        seen, unknown, blobs = eyes.look(im, setup.camera, setup.table, cat, region)
+        seen, unknown, blobs = eyes.look(im, setup.camera, setup.table, cat, region, hues=getattr(setup, "hues", None) or None)
         if hide is not None:  # what shows mostly where the tower shows IS the tower, not a block on the table behind it
             cam = setup.camera.scaled((im.shape[1], im.shape[0]))
 
@@ -174,7 +174,8 @@ class Sight:
         if s is not None:
             levels, left = plan_tower(s["seen"], cat, max_mm=self._tower_max()) if s["seen"] else ([], [])
             out["sight"] = dict(t=s["t"], age_s=round(time.time() - s["t"]), stale=s["stale"], unknown=s["unknown"],
-                                seen=[dict(name=b.name, lies=b.rest.name, mm=[round(b.uv[0]), round(b.uv[1])], fit=round(100 * b.score)) for b in s["seen"]],
+                                seen=[dict(name=b.name, lies=b.rest.name, mm=[round(b.uv[0]), round(b.uv[1])], fit=round(100 * b.score), crowded=bool(getattr(b, "crowded", False)),
+                                                 unsure=(getattr(b, "rival", "") or "another reading") if getattr(b, "margin", 1.0) < 0.05 else "") for b in s["seen"]],
                                 order=[lv["block"].name for lv in levels], height_mm=levels[-1]["top_mm"] if levels else 0.0, left_out=[f"{b.name}: {why}" for b, why in left])
         return out
 
@@ -261,6 +262,14 @@ class Sight:
             levels, _ = plan_tower(free, cat, max_mm=self._tower_max())
             if not levels:
                 raise Refused("the camera sees no block that can go onto a tower")
+            from .closed import jaws_room
+
+            for lv in levels:  # this build looks once and never again: it takes only what it is sure of and can get at
+                b = lv["block"]
+                if jaws_room(b, s["seen"], cat.jaw_mm, full=True) is None:
+                    raise Refused(f"the jaws have no room beside the {b.name}: move the blocks apart and Look again, or build with a look after every block (Loop), which pushes them apart")
+                if getattr(b, "margin", 1.0) < 0.05:
+                    raise Refused(f"the camera is not sure how the {b.name} lies ({getattr(b, 'rival', '') or 'it could be read another way'}): turn it or move it, then Look again")
             sp, legs = copy.deepcopy(self.spots), []
             for k, lv in enumerate(levels):
                 b = lv["block"]
