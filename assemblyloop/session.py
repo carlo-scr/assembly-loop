@@ -38,6 +38,7 @@ from .deadman import Deadman, QuestDeadman
 from .feeds import TABLE_CAMERA, MadeUp, same_device
 from .guard import Blocked, Guard, Limits, Refused, Released
 from .park import PARK_DEG, fold_away
+from .record.hooks import Recording
 from .sight import NotAsPlanned, Sight
 from .spots import Spots, demo_spots, per_arm, plan_move, tool_axis
 
@@ -93,9 +94,10 @@ def jog_axes(rpy_deg):
     return np.stack([fwd, np.cross(up, fwd), up], 1)
 
 
-class Session(Sight):
+class Session(Sight, Recording):
     def __init__(self, arms=None, quest_port=6666, hand="right", spots_path="spots.json", log_dir="assembly_logs", probe=answers, say=None, fake_speed=1.0,
-                 guard_kw=None, limit_kw=None, camera=None, camera_path="camera.json", blocks_path="blocks.json", key_hold=False, feeds=None, designs_dir="designs"):
+                 guard_kw=None, limit_kw=None, camera=None, camera_path="camera.json", blocks_path="blocks.json", key_hold=False, feeds=None, designs_dir="designs",
+                 campaigns_root="campaigns", record_kw=None):
         self.arms, self.quest_port, self.hand, self.probe, self.fake_speed = arms or default_arms(), int(quest_port), hand, probe, float(fake_speed)
         # a move that should meet nothing goes in pieces of up to 80 mm (the guard's own default is 30) at up to 120 mm/s
         # a move that was asked for, or was paused, waits two minutes for the switch (ten with the page's own switch) before the session is ended
@@ -111,6 +113,7 @@ class Session(Sight):
         if feeds is not None and "stand-in" in self.arms:
             feeds.add(dict(id="made_up", label="Made-up camera", arms=("stand-in",), make=lambda: MadeUp(self._made_up_world)))
         self._sight_init(camera, camera_path, blocks_path, designs_dir)
+        self._rec_init(campaigns_root, record_kw)  # recording, as data to learn from: off until switched on (record/)
         self._reset()
         threading.Thread(target=self._probe_loop, daemon=True).start()
 
@@ -238,6 +241,7 @@ class Session(Sight):
             worker.join(timeout=3.0)
         if park is not None:
             park.join(timeout=3.0)
+        self._rec_close(why or "the session ended")
         with self.lock:
             if self.connected:
                 try:
@@ -838,6 +842,7 @@ class Session(Sight):
 
         def before(s):
             job["i"] = next((i for i, x in enumerate(job["steps"]) if x is s), job["i"])
+            self._rec_event("step", i=job["i"], name=s["name"])
             if job["step"]:
                 job["waiting"] = True
                 while not self._next.wait(0.05):
@@ -860,6 +865,7 @@ class Session(Sight):
                 text = leg.get("text") or f"{at} to {dst}"
                 if leg.get("prepare"):  # a camera job: the block is taken where the newest picture shows it
                     leg["prepare"]()
+                self._rec_begin(job, k, leg, text)  # recording: this leg is one episode
                 tries = 0
                 while True:  # the same block again, the jaws closed a little further, if the gripper's camera saw it stay behind
                     here = g.where()
@@ -885,6 +891,7 @@ class Session(Sight):
                         self.say(f"  {e}: once more, the jaws closed {1.5 * tries:g} mm further")
                 with open(self.log_dir / "moves.jsonl", "a") as fh:
                     fh.write(json.dumps(dict(t=time.time(), src=at, dst=dst, src_up=leg["su"], dst_up=leg["du"], rehearse=job["rehearse"], **rec), default=float) + "\n")
+                self._rec_motion_done(rec)
                 if rec["blocked"]:
                     outcome = f"blocked at '{rec['blocked']['step']}': lifted clear. Look, then say where " + ("the blocks are" if legs else "the thing is")
                     lost()
@@ -900,6 +907,7 @@ class Session(Sight):
                         self.thing_at = dst
                 if leg.get("then"):
                     leg["then"]()
+                self._rec_finish("done")
             if outcome == "done" and job.get("finish"):
                 job["finish"]()
         except NothingHeld as e:
@@ -926,6 +934,7 @@ class Session(Sight):
             raise
         finally:
             latched = g.latched
+            self._rec_finish(outcome)  # an episode still open ended with the job (a no-op if none is)
             with self.lock:
                 job["outcome"], job["i"], job["waiting"], self.worker = outcome, None, False, None
                 if outcome.startswith("stopped") and self.gate is not None:

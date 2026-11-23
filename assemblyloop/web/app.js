@@ -24,6 +24,7 @@ async function post(path, body) {
     return j;
   } catch (e) { say("no answer from the program: " + e); }
 }
+function dl(box, rows) { box.replaceChildren(...rows.flatMap(([k, v]) => [el("dt", "", k), el("dd", "", v)])); }
 function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 function chip(mark, cls, text, detail, btn) { const c = el("span", "chip " + cls); c.append(el("b", "", mark), el("span", "", text)); if (detail) c.append(el("small", "", detail)); if (btn) c.append(btn); return c; }
 function once(key, value, fn) { const v = JSON.stringify(value); if (sig[key] !== v) { sig[key] = v; fn(); } }
@@ -234,6 +235,36 @@ const setTab = t => { tab = t; if (t === "cam") designs(); $("tab_blocks").class
 $("tab_blocks").onclick = () => setTab("blocks"); $("tab_cam").onclick = () => setTab("cam");
 $("logbtn").onclick = () => { show("logdrawer", $("logdrawer").hidden); const lg = $("log"); lg.scrollTop = lg.scrollHeight; };
 // the small sheets (help, find the table): a button with data-pop opens one over the controls; a click elsewhere closes it
+// ---------------------------------------------------------------- recording (record/): every block taken and put down, as an episode
+let recLast = null;
+async function recTick() {
+  try {
+    const r = await (await fetch("/api/record")).json(); recLast = r;
+    const b = $("recbtn"); b.classList.toggle("on", !!r.on); b.classList.toggle("live", r.on && r.state === "recording");
+    $("rectext").textContent = r.on ? `REC · ${r.episodes}` : "REC";
+    b.title = r.on ? `Recording into “${r.campaign}”: ${r.episodes} episodes this session (${r.succeeded} placed, ${r.failed} not)` : "Record every block taken and put down, as data to learn from";
+    if ($("recpanel").hidden) return;
+    const names = (r.campaigns || []).map(c => [c.slug, c.name]);
+    once("campaigns", names, () => { const sel = $("rec_campaign"), keep = sel.value || r.slug || r.default || "";
+      sel.replaceChildren(...(names.length ? names : [["", "— make one below —"]]).map(([v, t]) => { const o = el("option", "", t); o.value = v; return o; }));
+      const want = [...sel.options].find(o => o.value === keep || o.textContent === keep); if (want) sel.value = want.value; });
+    $("rec_toggle").textContent = r.on ? "Stop recording" : "Record"; $("rec_toggle").classList.toggle("go", !r.on); $("rec_campaign").disabled = !!r.on;
+    $("rec_state").textContent = r.on ? (r.state === "recording" ? "● recording an episode" : r.state === "labelling" ? "checking the last episode" : "on, waiting for a move") : "off";
+    const c = (r.campaigns || []).find(x => x.slug === ($("rec_campaign").value || r.slug)) || {}, up = c.upload || {}, rnd = up.round || {};
+    const rows = [];
+    if (r.on) rows.push(["This session", `${r.episodes} episodes: ${r.succeeded} placed, ${r.failed} not`], ["Last", r.last ? `${r.last.outcome}: ${r.last.instruction || ""}` : "–"], ["Cameras", (r.cameras || []).join(", ") || "none"]);
+    if (c.slug) rows.push(["Campaign", `${c.runs} episodes, ${c.ready} checked and passed, ${c.succeeded} placed` + (c.failed_validation ? `, ${c.failed_validation} failed checks` : "") + (c.unfinished ? `, ${c.unfinished} still being checked` : "")],
+                          ["Uploaded", up.last ? `${up.last} to ${up.repo}` + (rnd.error ? ` · last try failed: ${rnd.error}` : "") : (up.error ? "failed: " + up.error : "not yet")]);
+    rows.push(["Folder", r.on ? r.folder : r.root]);
+    dl($("rec_stats"), rows);
+    $("rec_cmd").textContent = `python -m assemblyloop upload --campaign "${c.name || "<campaign>"}" --repo <org>/<dataset> --watch`;
+  } catch (e) { /* the state poll says what is wrong */ }
+}
+setInterval(recTick, 1500); recTick();
+$("recbtn").onclick = ev => { ev.stopPropagation(); $("recpanel").hidden = !$("recpanel").hidden; sig.campaigns = null; recTick(); };
+$("rec_toggle").onclick = () => post("/api/record", recLast && recLast.on ? {on: false} : {on: true, campaign: $("rec_campaign").value}).then(recTick);
+$("rec_create").onclick = async () => { const name = $("rec_new").value.trim(); if (!name) return; const j = await post("/api/campaign", {name}); if (j && !j.error) { $("rec_new").value = ""; sig.campaigns = null; await recTick(); $("rec_campaign").value = j.slug; } };
+addEventListener("click", e => { if (!$("recpanel").hidden && !(e.target.closest && e.target.closest("#recpanel,#recbtn"))) $("recpanel").hidden = true; });
 function closePops() { document.querySelectorAll(".pop.on").forEach(p => p.classList.remove("on")); }
 addEventListener("click", e => {
   const b = e.target.closest && e.target.closest("[data-pop]"), inside = e.target.closest && e.target.closest(".pop");

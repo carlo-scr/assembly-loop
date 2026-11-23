@@ -1,5 +1,7 @@
 # what a session at the robot writes: logs and the taught places belong to the rig, not to the code
 assembly_logs/
+# what is recorded as data (campaigns of episodes): never in git; often on another drive (--campaigns)
+/campaigns/
 brickloop_logs/
 spots.json
 camera.json

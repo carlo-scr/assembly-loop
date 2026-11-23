@@ -10,6 +10,7 @@ dependencies = ["numpy>=1.21"]
 [project.optional-dependencies]
 real = ["xarm-python-sdk==1.18.4"]  # the arm's SDK, at the version the lab's own tools pin
 eyes = ["opencv-python-headless>=4.8"]  # the camera that looks at the table
+data = ["imageio>=2.31", "imageio-ffmpeg>=0.4.9", "pyarrow>=14", "huggingface_hub>=0.24"]  # recording episodes, the LeRobot export, uploading it
 dev = ["pytest>=8", "ruff>=0.5", "opencv-python-headless>=4.8"]
 
 [project.scripts]

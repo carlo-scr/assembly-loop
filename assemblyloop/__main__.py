@@ -6,6 +6,14 @@
   python -m assemblyloop deadman --port 6666               shows whether the Quest grip arrives (no arm involved)
   python -m assemblyloop look --out look.jpg               one picture from the camera with what it makes out drawn in (no arm involved)
 
+Recording, as data to learn from (the lab's teleoperation workflow; see assemblyloop/record):
+  python -m assemblyloop campaign new "blocks pickplace v1"     a campaign: campaigns/blocks-pickplace-v1/
+  python -m assemblyloop campaign list | show <name>            every campaign / the episodes of one
+  python -m assemblyloop dashboard --record "blocks pickplace v1"   record every block taken and put down (or switch it on the page)
+  python -m assemblyloop validate --campaign <name>             check the episodes (the verdict goes into each run.json)
+  python -m assemblyloop export --campaign <name>               the ready ones -> campaigns/<name>/lerobot (LeRobot v2.1, 30 Hz)
+  python -m assemblyloop upload --campaign <name> --repo <org>/<dataset> [--watch]   check, export, send what is new
+
 Press-fit bricks on a taught stud plate (command line only; older than the dashboard):
   python -m assemblyloop demo-plate --out plate_demo.json  a made-up taught file, for trying `plan` anywhere
   python -m assemblyloop plan --plate plate_demo.json --src C3 --dst E3 --offset 6 --correct truth
@@ -234,7 +242,8 @@ def cmd_dashboard(a):
 
         feeds = Feeds()  # opens no camera until a page asks for pictures
     ses = Session(default_arms(a.right, a.left, a.mount_deg), quest_port=a.quest_port, hand=a.hand, spots_path=a.spots, log_dir=a.log, say=print, camera=camera, key_hold=a.key_hold,
-                  feeds=feeds)
+                  feeds=feeds, campaigns_root=a.campaigns, record_kw=dict(size=(a.video_w, a.video_h), fps=a.video_fps))
+    ses.record_default = a.record  # the campaign the page offers first (recording still starts on the page, with a session)
     srv = make_server(ses, a.port)
     print(f"dashboard: http://127.0.0.1:{srv.server_address[1]}/   (nothing is connected until you start a session on the page; Ctrl-C here stops the arm and closes)")
     print(f"           http://127.0.0.1:{srv.server_address[1]}/classic   the older page, without the model and the live pictures")
@@ -245,6 +254,61 @@ def cmd_dashboard(a):
     finally:
         ses.close()
         srv.server_close()
+
+
+def cmd_campaign(a):
+    from .record.store import Campaign
+
+    if a.what == "new":
+        c = Campaign.create(a.campaigns, a.name, a.notes)
+        print(f"campaign {c.name!r}: {c.path}")
+        print(f"record into it: python -m assemblyloop dashboard --record {a.name!r}   (or choose it on the page)")
+        return 0
+    if a.what == "list":
+        for c in Campaign.all(a.campaigns):
+            s = c.summary()
+            print(f"  {s['slug']:32s} {s['runs']:5d} episodes, {s['ready']} ready, {s['succeeded']} placed as planned" + (f", {s['failed_validation']} failed checks" if s["failed_validation"] else ""))
+        return 0
+    c = Campaign.open(a.campaigns, a.name)
+    for r in c.runs():
+        m, v = r.meta, r.validation
+        print(f"  {r.name}  {r.status:10s} {'passed' if v.get('ok') else ('FAILED' if v else '-'):7s} {(m.get('outcome') or {}).get('kind') or '-':12s} {(m.get('task') or {}).get('instruction', '')}")
+    return 0
+
+
+def cmd_validate(a):
+    from .record.store import Campaign
+    from .record.validate import validate_campaign
+
+    out = validate_campaign(Campaign.open(a.campaigns, a.campaign), again=a.again)
+    for name, v in out.items():
+        bad = [f"{c['check']}: {c['detail']}" for c in v["checks"] if c["level"] != "ok"]
+        print(f"  {'passed' if v['ok'] else 'FAILED'}  {name}" + ("".join(f"\n      {b}" for b in bad)))
+    print(f"{len(out)} run(s) checked")
+    return 0 if all(v["ok"] for v in out.values()) else 1
+
+
+def cmd_export(a):
+    from .record.export import export_campaign
+    from .record.store import Campaign
+
+    c = Campaign.open(a.campaigns, a.campaign)
+    added, refused = export_campaign(c, fps=a.fps, include_failed=a.include_failed)
+    print(f"{len(added)} episode(s) added to {c.path / 'lerobot'}" + (f"; {len(refused)} refused (see above)" if refused else ""))
+    return 0
+
+
+def cmd_upload(a):
+    from .record.store import Campaign
+    from .record.upload import round_once, watch
+
+    c = Campaign.open(a.campaigns, a.campaign)
+    if a.watch:
+        watch(c, a.repo, every_s=a.every, private=not a.public)
+        return 0
+    r = round_once(c, a.repo, private=not a.public)
+    print(r)
+    return 0
 
 
 def main(argv=None):
@@ -303,12 +367,40 @@ def main(argv=None):
     s.add_argument("--hand", default="right")
     s.add_argument("--port", type=int, default=8777)
     s.add_argument("--log", default="assembly_logs")
+    s.add_argument("--campaigns", default="campaigns", help="where campaigns are kept (an external drive, say)")
+    s.add_argument("--record", default=None, help="the campaign the page offers first for recording")
+    s.add_argument("--video_w", type=int, default=1280)
+    s.add_argument("--video_h", type=int, default=720)
+    s.add_argument("--video_fps", type=float, default=30.0)
+    s = sub.add_parser("campaign")
+    s.add_argument("what", choices=("new", "list", "show"))
+    s.add_argument("name", nargs="?", default=None)
+    s.add_argument("--notes", default="")
+    s.add_argument("--campaigns", default="campaigns")
+    for name in ("validate", "export", "upload"):
+        s = sub.add_parser(name)
+        s.add_argument("--campaign", required=True)
+        s.add_argument("--campaigns", default="campaigns")
+        if name == "validate":
+            s.add_argument("--again", action="store_true", help="check runs that were checked before too")
+        if name in ("export", "upload"):
+            s.add_argument("--fps", type=float, default=30.0)
+        if name == "export":
+            s.add_argument("--include_failed", action="store_true", help="also runs that failed their checks (NOT advised)")
+        if name == "upload":
+            s.add_argument("--repo", required=True, help="the Hugging Face dataset: <org>/<name>")
+            s.add_argument("--watch", action="store_true", help="again every --every seconds, for ever")
+            s.add_argument("--every", type=float, default=300.0)
+            s.add_argument("--public", action="store_true", help="make the dataset public (the default is private: the cameras may show people)")
     a = ap.parse_args(argv)
+    if a.cmd == "campaign" and a.what in ("new", "show") and not a.name:
+        ap.error(f"campaign {a.what} needs a name")
     if a.cmd == "demo-plate":
         Path(a.out).write_text(json.dumps(demo(), indent=1))
         print(f"wrote {a.out} (made up, for `plan` only)")
         return None
-    return dict(plan=cmd_plan, deadman=cmd_deadman, status=cmd_status, teach=cmd_teach, run=cmd_run, dashboard=cmd_dashboard, look=cmd_look)[a.cmd](a)
+    return dict(plan=cmd_plan, deadman=cmd_deadman, status=cmd_status, teach=cmd_teach, run=cmd_run, dashboard=cmd_dashboard, look=cmd_look,
+                campaign=cmd_campaign, validate=cmd_validate, export=cmd_export, upload=cmd_upload)[a.cmd](a)
 
 
 if __name__ == "__main__":

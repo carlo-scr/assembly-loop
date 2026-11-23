@@ -247,6 +247,42 @@ they are checked one by one, since where each should be is known); a lying cylin
 never turned over; the tower and the travel above it stay under 300 mm; the wrist cameras are not used. `python -m assemblyloop look`
 takes one picture and writes `look.jpg` with what the camera makes out, without any arm.
 
+## Recording data
+
+Everything the arm does in a tower or a design can be recorded as data to learn from, in the same layout and format
+as the lab's teleoperation recorder (`xarm7-data-collection`), so that the two can be mixed. One block taken and put
+down is one **episode**. Set up once on the laptop: `pip install -e ".[real,eyes,data]"` and `huggingface-cli login`.
+
+1. **A campaign** (a named collection): `python -m assemblyloop campaign new "blocks pickplace v1"`, or on the
+   page: **REC** (top right) → New campaign.
+2. **Record:** REC → choose the campaign → Record. Then build towers and designs as usual; every block is an
+   episode. The button shows the count; a pulsing dot while an episode is being recorded. Rehearsals are not
+   recorded. While recording, the cameras of the arm stay open at 1280 × 720, 30 a second (`--video_w`,
+   `--video_h`, `--video_fps`).
+3. **Send it to Hugging Face as it comes**, in a second terminal:
+   `python -m assemblyloop upload --campaign "blocks pickplace v1" --repo <org>/<dataset> --watch`.
+   Every five minutes it checks the new episodes, adds the ones that passed to the LeRobot export and uploads what
+   is new as one commit. The dataset is private unless `--public`.
+
+Per episode, in `campaigns/<campaign>/recording_<time>/` (the lab's names):
+
+| File | What |
+|---|---|
+| `raw/arm_state.jsonl` | the arm about 30 a second: planned and measured joints, flange pose (base and the lab's world frame), gripper, error, whether moving was allowed |
+| `raw/commanded.jsonl` | every command the guard sent (moves, turns, grips, pauses), with why |
+| `raw/events.jsonl` | the steps, what the gripper's camera saw at the grip |
+| `video/<camera>.mp4` + `_frame_times.json` | each camera of the arm, every frame timed on the same clock as the rest |
+| `run.json` | the task (instruction, where from and to, the block), the outcome (placed, misplaced, blocked, nothing held, …, and where the camera saw it land), provenance (git commit, settings, catalogue, camera fit, the controller's own settings), the checks |
+
+`python -m assemblyloop campaign show <name>` lists them; `validate` checks them (the verdict goes into `run.json`);
+`export` turns the ones that passed into `campaigns/<name>/lerobot/` (LeRobot v2.1, 30 Hz, nearest in time, never
+interpolated, every video frame one row; added to, never rewritten); `upload` does all three and sends what is
+new. The export's `action` is the change of the arm's planned flange position, of its last joint and the gripper's
+target (there is no operator's input: a script made it); every episode says so (`action_source`).
+
+Not yet tried at the rig: the four cameras at 1280 × 720 and 30 a second while the arm moves (the program's share
+of the processor, the USB hub), and the measured joints read 30 times a second next to the arm's own commands.
+
 ## Layout
 
 ```
@@ -265,6 +301,7 @@ assemblyloop/
   park.py       the other arm folded out of the way, as the lab's Rehome does it
   feeds.py      the live pictures: one owner per camera, lent to the block finder for its own picture
   dashboard.py  the local web server of a session, and the older page
+  record/       recording episodes as data: campaigns, the recorder, checks, the LeRobot export, the upload
   designs/      the example designs
   web/          the page that fits one screen (index.html, app.css, app.js), the model of the arm (scene.js),
                 the designer (build.html, build.css, build.js),

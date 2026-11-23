@@ -355,6 +355,8 @@ def make_server(session, port=8777):
             session.show_table(str(b.get("kind")), b.get("n", 12), bool(b.get("step")))
         elif path == "/api/build_seen":
             session.build_seen(str(b.get("on")), bool(b.get("rehearse")), bool(b.get("step")), bool(b.get("check", True)))
+        elif path == "/api/record":
+            session.record_on(str(b.get("campaign"))) if b.get("on") else session.record_off()
         elif path == "/api/build_design":
             session.build_design(str(b.get("name")), str(b.get("on")), bool(b.get("rehearse")), bool(b.get("step")), bool(b.get("check", True)))
         elif path == "/api/hold":
@@ -377,6 +379,8 @@ def make_server(session, port=8777):
             return session.design_save(d)
         if path == "/api/design/order":
             return dict(design=session.design_order(d))
+        if path == "/api/campaign":
+            return session.record_new_campaign(str(b.get("name") or ""), str(b.get("notes") or ""))
         return None
 
     class Handler(BaseHTTPRequestHandler):
@@ -415,6 +419,8 @@ def make_server(session, port=8777):
                     return self._send(dict(designs=session.design_list()))
                 if url.path == "/api/design":
                     return self._send(dict(design=session.design_get(parse_qs(url.query).get("name", [""])[0])))
+                if url.path == "/api/record":
+                    return self._send({**session.record_state(), "default": getattr(session, "record_default", None)})
                 if url.path == "/api/design/mat":
                     return self._send(session.design_mat())
                 if url.path == "/api/design/catalogue":

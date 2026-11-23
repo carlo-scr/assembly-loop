@@ -30,6 +30,15 @@ header{display:flex;align-items:center;gap:14px;padding:10px 14px;min-height:60p
 .hold.sw.on{border-color:var(--ok);background:color-mix(in srgb,var(--ok) 16%,var(--card))}
 .nokeys .key kbd{display:none}.nokeys .key span{font-size:13px;color:var(--ink);font-weight:600;padding:5px 0}
 .hold.on{border-color:var(--ok)}.hold.on i{background:var(--ok);box-shadow:0 0 0 4px color-mix(in srgb,var(--ok) 25%,transparent)}.hold.on b{color:var(--ok)}
+.recbtn{display:flex;align-items:center;gap:8px;font-weight:750;letter-spacing:.06em;padding:9px 14px;border-radius:10px}
+.recbtn i{width:11px;height:11px;border-radius:50%;border:2px solid var(--faint);flex:none}
+.recbtn.on{border-color:var(--stop);color:var(--stop)}.recbtn.on i{border-color:var(--stop);background:transparent}
+.recbtn.live i{background:var(--stop);animation:recpulse 1s infinite}
+@keyframes recpulse{50%{opacity:.35}}
+.recpanel{position:fixed;top:64px;right:12px;z-index:25;width:min(430px,calc(100vw - 24px));background:var(--card2);border:1px solid var(--line);border-radius:14px;padding:12px 14px;
+  box-shadow:0 14px 40px rgba(0,0,0,.45)}
+.recpanel code{font:11.5px ui-monospace,Menlo,monospace;color:var(--ink);user-select:all;word-break:break-all}
+.recstats{display:grid;grid-template-columns:max-content 1fr;gap:3px 12px;margin:10px 0 0;font-size:12.5px}.recstats dt{color:var(--mute)}.recstats dd{margin:0;font-variant-numeric:tabular-nums}
 #stop{background:var(--stop);color:#fff;border-color:var(--stop);font-size:14.5px;font-weight:750;letter-spacing:.04em;padding:11px 22px}
 #msg{position:fixed;top:64px;left:50%;transform:translateX(-50%);z-index:20;max-width:min(900px,80vw);background:var(--card);border:1px solid var(--no);color:var(--no);
   font-weight:600;padding:9px 16px;border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.35);cursor:pointer}

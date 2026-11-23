@@ -11,9 +11,25 @@
   <div id="phase" class="phase">…</div>
   <div id="hint"></div>
   <div id="hold" class="hold" role="button" tabindex="-1"><i></i><div><b id="held">no session</b><small id="holdsub"></small></div></div>
+  <button id="recbtn" class="recbtn" title="Record every block taken and put down, as data to learn from"><i></i><span id="rectext">REC</span></button>
   <button id="stop" title="Stops the arm and ends this session">STOP SESSION</button>
 </header>
 <div id="msg" hidden></div>
+<div id="recpanel" class="recpanel" hidden>
+  <div class="head"><h2>Recording</h2><span class="grow"></span><span id="rec_state" class="muted small"></span></div>
+  <div class="row">
+    <label class="mini col">Campaign<select id="rec_campaign"></select></label>
+    <button id="rec_toggle" class="go">Record</button>
+  </div>
+  <div class="row">
+    <label class="mini col">New campaign<input type="text" id="rec_new" placeholder="e.g. blocks pickplace v1" maxlength="60"></label>
+    <button id="rec_create">Make it</button>
+  </div>
+  <dl id="rec_stats" class="recstats"></dl>
+  <div class="note">Every block taken and put down is one episode: the arm about 30 times a second, every command, the
+    cameras of the arm, and where the camera saw the block land. Rehearsals are not recorded. To send the episodes to
+    Hugging Face as they come, run in another terminal:<br><code id="rec_cmd"></code></div>
+</div>
 
 <main>
 <div class="col left">

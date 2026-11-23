@@ -351,6 +351,9 @@ class Sight:
         eyes, feeds = self._eyes(), getattr(self, "feeds", None)
         if feeds is None:
             return eyes.grab(dev, (1280, 720), warm=5)
+        im = feeds.latest(dev)  # while recording the camera streams anyway: its newest picture, and no gap in the recording
+        if im is not None and im.shape[1] >= 1280:
+            return im
         with feeds.borrow(dev):
             return eyes.grab(dev, (1280, 720), warm=5)
 
@@ -379,6 +382,7 @@ class Sight:
                 return
             with open(self.log_dir / "moves.jsonl", "a") as fh:
                 fh.write(json.dumps(dict(t=time.time(), grip_seen=round(cover, 2), patch_px=area, block=leg["src"])) + "\n")
+            self._rec_event("grip_seen", cover=round(cover, 2), patch_px=area, block=leg["src"])
             if cover < HELD:
                 raise NotHeld(f"the gripper's camera saw the {leg['src']} stay behind (what it held covers {100 * cover:.0f}% of where it was)")
             self.say(f"  the gripper's camera sees the block come along ({100 * cover:.0f}%)")
@@ -429,6 +433,7 @@ class Sight:
         with open(self.log_dir / "moves.jsonl", "a") as fh:
             fh.write(json.dumps(dict(t=time.time(), check=k + 1, job=job.get("what"), picture=f.name, arm=g.where().round(1).tolist(), blocks=rows, problems=bad), default=float) + "\n")
         self.say(f"the camera checked step {k + 1}: " + ("every block is where it should be" if not bad else "; ".join(bad)))
+        self._rec_event("check", leg=k, offset=job.get("expect_from", 0), rows=rows, problems=bad, picture=str(f))
         if bad:
             raise NotAsPlanned("; ".join(bad))
 
