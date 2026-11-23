@@ -82,14 +82,16 @@ label.mini input{width:64px}label.mini.col input,label.mini.col select{width:100
 .rungs{list-style:none;margin:8px 0 0;padding:0}
 .rungs li{display:grid;grid-template-columns:24px minmax(0,1fr) auto;gap:10px;align-items:center;padding:7px 8px;border-radius:10px;position:relative}
 .rungs li+li::before{content:"";position:absolute;left:19.5px;top:-9px;height:18px;width:1.5px;background:var(--line)}
-.rungs .n{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:700;border:1.5px solid var(--line);color:var(--faint);background:var(--card);position:relative;z-index:1}
+.rungs li>.n{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:700;border:1.5px solid var(--line);color:var(--faint);background:var(--card);position:relative;z-index:1}
 .rungs h3{margin:0;min-width:0}.rungs .b{min-width:0}
 .rungs h3 .sum{font-weight:500;color:var(--mute);font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .rungs li.cur h3 .sum{display:none}
 .rungs li.done .b>:not(h3),.rungs li.todo .b>:not(h3){display:none}  /* only the rung that is next is spelled out */
 .rungs .a{display:flex;gap:6px}
-.rungs li.done .n{background:var(--ok);border-color:var(--ok);color:#04130b}
-.rungs li.cur{background:var(--card2)}.rungs li.cur .n{border-color:var(--accent);color:var(--accent)}
+.tagbtn{font-size:12px;padding:3px 11px;border-radius:999px;border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--card) 80%,transparent);backdrop-filter:blur(6px)}
+#o_btn.busy:disabled{opacity:1;border-color:var(--cal);color:var(--cal)}  /* the other arm is moving: the button says how far it is */
+.rungs li.done>.n{background:var(--ok);border-color:var(--ok);color:#04130b}
+.rungs li.cur{background:var(--card2)}.rungs li.cur>.n{border-color:var(--accent);color:var(--accent)}
 .rungs li.todo>.b,.rungs li.todo>.a{opacity:.45}.rungs li.todo h3 .sum{display:none}
 .armlist{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-top:4px}
 .armlist label{display:flex;flex-direction:column;gap:1px;padding:6px 9px;border:1px solid var(--line);border-radius:9px;cursor:pointer;background:var(--bg);min-width:0}

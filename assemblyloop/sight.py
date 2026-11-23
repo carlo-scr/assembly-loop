@@ -41,6 +41,7 @@ from .arms import matrix_rpy, rpy_matrix, twist_deg
 from .blocks import Catalogue, plan_tower
 from .cycle import NotHeld
 from .guard import Refused
+from .spots import per_arm
 
 OFF_MM, TURN_DEG, FIT, VISIBLE = 8.0, 12.0, 0.45, 0.3  # a block counts as in place within these; below FIT it is not there; less VISIBLE is not judged
 
@@ -61,8 +62,14 @@ def spin(rpy_deg, up, deg):
 
 class Sight:
     def _sight_init(self, camera=None, camera_path="camera.json", blocks_path="blocks.json", designs_dir="designs"):
-        self.camera, self.camera_path, self.blocks_path, self.designs_dir = camera, Path(camera_path), Path(blocks_path), Path(designs_dir)
+        self.camera, self._camera_file, self.blocks_path, self.designs_dir = camera, Path(camera_path), Path(blocks_path), Path(designs_dir)
         self.setup, self.sight, self._setup_read = None, None, False
+
+    @property
+    def camera_path(self):
+        """Where the camera's fit to the table is kept for the arm of this session (each arm has its own: the fit is
+        in that arm's base frame)."""
+        return per_arm(self._camera_file, getattr(self, "chosen", None))
 
     # ------------------------------------------------------------------ what is there to work with
     def _eyes(self):
@@ -171,6 +178,7 @@ class Sight:
         with self.lock:
             if self.phase() != "ARMED":
                 raise Refused(f"the camera can be shown the table when ARMED (now: {self.phase()})")
+            self._not_parking("showing the camera the table")
             eyes, block = self._eyes(), self.catalogue().kind(str(kind))
             if not block.rests()[0].turns:
                 raise Refused("show the camera the table with a bar or a slab: a cylinder on its end has no direction")
@@ -431,6 +439,7 @@ class Sight:
         with self.lock:
             if self.phase() != "ARMED":
                 raise Refused(f"a tower can only be started when ARMED (now: {self.phase()})")
+            self._not_parking("a tower")
             self._eyes()
             cat, why = self.catalogue(), self._setup_fits()
             if why:
@@ -573,6 +582,7 @@ class Sight:
         with self.lock:
             if self.phase() != "ARMED":
                 raise Refused(f"a design can only be built when ARMED (now: {self.phase()})")
+            self._not_parking("a design")
             self._eyes()
             cat, why = self.catalogue(), self._setup_fits()
             if why:

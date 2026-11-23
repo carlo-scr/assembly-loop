@@ -83,7 +83,8 @@ Good to know:
 
 A session writes `assembly_logs/guard.jsonl` (everything the arm was asked to do, and why each move ended),
 `assembly_logs/moves.jsonl` (one line per block moved) and `spots.json` (the taught places). None of these are
-tracked by git.
+tracked by git. Each arm has its own places and its own camera fit: `spots.json` and `camera.json` are the right
+arm's, `spots_left.json` and `camera_left.json` the left arm's.
 
 ## Designing what to build
 
@@ -160,6 +161,25 @@ One rung at a time. Stop at the first that misbehaves and keep the two log files
    The nudge that meets the box must end by itself ("blocked: something is in the way") before the box is crushed.
    If it keeps pushing, stop: put nothing down on the table until this is understood.
 9. Press STOP SESSION once on purpose. The label reads STOPPED and stays that way.
+
+## The other arm out of the way
+
+A session drives one arm. While it runs on one arm, the other one can be folded away so that it is not in the way:
+press **Move right arm away** (or left), at the top left of the arm's model. It is offered only while that arm answers
+on the network, and only while the arm of the session stands still. It moves only while the grip is held (or MOVING
+is on), like everything else: letting go (or Esc, or the space bar) pauses it, STOP SESSION and Disarm stop it.
+
+It does what the lab's own Rehome does, in the lab's order: it opens the gripper, comes straight up, goes to the lab's
+waypoint in front of the arm (400, 0, 300 mm in that arm's base frame) and folds into the lab's resting pose, all
+joints together at 20 degrees per second. In that pose the arm is raised high and out to its own side. The detour
+through the waypoint is there because a direct fold from over the table once swung the lab's left gripper through the
+head camera's mount. If the gripper is tilted, it is pointed down first, in place. An arm that is nearly folded
+already is folded from where it is; one that is folded already is not touched. Nothing is sent if the controller
+reports an error (it is never cleared from here), if the arm is moving (another program may be driving it), or if
+any point on the way is out of its reach. Afterwards that arm is left stopped and the connection is closed.
+
+**Not yet run on the real arms.** The first time: start a session on the left arm, press the button, keep a hand on
+the right arm's emergency stop, and switch MOVING on.
 
 ## Moving and stacking blocks
 
@@ -242,6 +262,7 @@ assemblyloop/
   design.py     designs: what to build, block by block; whether each step stands and the gripper fits
   plate.py      a stud plate taught from three poses (press-fit bricks; command line only for now)
   session.py    one session: OFF, DISARMED, AWAITING CALIBRATION, ARMED, RUNNING
+  park.py       the other arm folded out of the way, as the lab's Rehome does it
   feeds.py      the live pictures: one owner per camera, lent to the block finder for its own picture
   dashboard.py  the local web server of a session, and the older page
   designs/      the example designs

@@ -11,6 +11,11 @@ The ladder (the big label on the dashboard), every rung reached by a button on t
   STOPPED                the session was ended by STOP, a fault, or a grip released too long. "Start session" begins anew.
 Anything that moves needs BOTH the dashboard armed AND the grip held (`Gate`). Arming never moves anything by itself.
 
+The rig has two arms. A session has ONE of them; the other one can only be folded away to the lab's resting pose
+("Move right arm away" or left, `park.py`), with this session's hold-to-run switch, while this session's arm stands still.
+Each arm keeps its own taught places and its own camera fit (`per_arm`): spots.json and camera.json are the right
+arm's, spots_left.json and camera_left.json the left arm's.
+
 The job for now is deliberately simple: take the thing that stands on one taught spot and put it on another, once or
 again and again. The stud grid of `plate.py` comes back when the plates are fixed down.
 """
@@ -32,8 +37,9 @@ from .cycle import NotHeld, NothingHeld, Params, execute
 from .deadman import Deadman, QuestDeadman
 from .feeds import TABLE_CAMERA, MadeUp, same_device
 from .guard import Blocked, Guard, Limits, Refused, Released
+from .park import PARK_DEG, fold_away
 from .sight import NotAsPlanned, Sight
-from .spots import Spots, demo_spots, plan_move, tool_axis
+from .spots import Spots, demo_spots, per_arm, plan_move, tool_axis
 
 JOG = dict(up=(0, 0, 1), down=(0, 0, -1), fwd=(1, 0, 0), back=(-1, 0, 0), left=(0, 1, 0), right=(0, -1, 0))  # in (forward, left, up)
 TOOL_MM = 172.0  # from the flange to the fingertips of UFACTORY's gripper. FOR DRAWING ONLY: every spot and limit is a flange position
@@ -70,8 +76,10 @@ def mount_down(side, deg=45.0):
 
 
 def default_arms(right="192.168.1.199", left="192.168.1.219", mount_deg=45.0):
-    return {"right": dict(label="Right arm", ip=right, make=lambda: XArm(right), down=mount_down("right", mount_deg)),
-            "left": dict(label="Left arm", ip=left, make=lambda: XArm(left), down=mount_down("left", mount_deg)),
+    """The rig's arms. `park`: the lab's resting pose of that arm, to which it can be folded away while the other one
+    has a session."""
+    return {"right": dict(label="Right arm", ip=right, make=lambda: XArm(right), down=mount_down("right", mount_deg), park=PARK_DEG["right"]),
+            "left": dict(label="Left arm", ip=left, make=lambda: XArm(left), down=mount_down("left", mount_deg), park=PARK_DEG["left"]),
             "stand-in": dict(label="Stand-in arm (no robot)", ip=None, make=FakeArm)}
 
 
@@ -92,7 +100,8 @@ class Session(Sight):
         # a move that should meet nothing goes in pieces of up to 80 mm (the guard's own default is 30) at up to 120 mm/s
         # a move that was asked for, or was paused, waits two minutes for the switch (ten with the page's own switch) before the session is ended
         self.guard_kw, self.limit_kw = {"resume_s": 600.0 if key_hold else 120.0, "start_s": 600.0 if key_hold else 120.0, **(guard_kw or {})}, {"max_step_mm": 80.0, "max_speed_mm_s": 120.0, **(limit_kw or {})}
-        self.spots_path, self.log_root, self._say = Path(spots_path), Path(log_dir), say
+        self._spots_file, self.log_root, self._say = Path(spots_path), Path(log_dir), say
+        self.parking, self.park_latched, self._last_side = None, None, None  # the other arm being folded away; why that was stopped for good
         self.P, self.lock, self._next = Params(), threading.RLock(), threading.Event()
         self.lines = collections.deque(maxlen=120)
         self.reach, self._gen, self._quit = {}, 0, False
@@ -104,6 +113,11 @@ class Session(Sight):
         self._sight_init(camera, camera_path, blocks_path, designs_dir)
         self._reset()
         threading.Thread(target=self._probe_loop, daemon=True).start()
+
+    @property
+    def spots_path(self):
+        """Where the places of the arm of this session are kept (each arm has its own file)."""
+        return per_arm(self._spots_file, self.chosen)
 
     def _reset(self):
         self.arm, self.dm, self.gate, self.guard = None, None, None, None
@@ -122,11 +136,13 @@ class Session(Sight):
             self._say(line)
 
     def _probe_loop(self):
+        """Which arms answer on the network: all of them before a session, during one the other arm (not the one this
+        program is connected to, nor one that is being folded away)."""
         while not self._quit:
-            if not self.connected:
-                for key, a in self.arms.items():
-                    if a.get("ip"):
-                        self.reach[key] = bool(self.probe(a["ip"]))
+            for key, a in list(self.arms.items()):
+                p = self.parking
+                if a.get("ip") and not (self.connected and key == self.chosen) and not (p is not None and p["busy"] and p["key"] == key):
+                    self.reach[key] = bool(self.probe(a["ip"]))
             time.sleep(2.0)
 
     def _quest(self):
@@ -187,6 +203,8 @@ class Session(Sight):
                 raise Refused("with a real arm the only hold-to-run switch is the Quest grip (unless the dashboard was started with --key_hold)")
             self._reset()
             self.ended = None
+            if choice != self._last_side:  # the camera's fit and the last picture belong to the arm they were made with
+                self.setup, self.sight, self._setup_read, self._last_side = None, None, False, choice
             arm = self.arms[choice]["make"]()
             try:
                 arm.connect()
@@ -207,15 +225,19 @@ class Session(Sight):
             self.say(f"session started on the {self.arms[choice]['label'].lower()}: connected, read only (DISARMED)")
 
     def end(self, why=None):
-        """Stop the arm, let go of the connection and of the Quest's port. With `why` the label reads STOPPED."""
+        """Stop the arm, let go of the connection and of the Quest's port. With `why` the label reads STOPPED. An
+        arm being folded away is stopped first."""
         with self.lock:
             worker, guard = self.worker, self.guard
             if self.gate is not None:
                 self.gate.armed = False
             if worker is not None and guard is not None:
                 guard.abort(why or "the session was ended", latch=True)
+            park = self._stop_park(why or "the session was ended", latch=True)
         if worker is not None:
             worker.join(timeout=3.0)
+        if park is not None:
+            park.join(timeout=3.0)
         with self.lock:
             if self.connected:
                 try:
@@ -229,7 +251,7 @@ class Session(Sight):
             self._gen += 1
             job = self.job
             self._reset()
-            self.job, self.ended = job, why
+            self.job, self.ended, self.parking, self.park_latched = job, why, None, None
 
     def stop(self, why="stopped on the dashboard"):
         self.end(why)
@@ -254,6 +276,7 @@ class Session(Sight):
                 raise Refused("start a session first")
             if self.gate.armed:
                 return
+            self._not_parking("arming")
             bad = [f"{t} ({d})" if d else t for t, ok, d in self.checks() if not ok]
             if bad:
                 raise Refused("cannot arm: " + "; ".join(bad))
@@ -278,6 +301,7 @@ class Session(Sight):
                 self.guard.abort(why, latch=False)
             else:
                 self.arm.stop()
+            self._stop_park(why, latch=False)
             self.say(f"DISARMED ({why})")
 
     # ------------------------------------------------------------------ calibration: nudge, grip, save spots
@@ -286,6 +310,7 @@ class Session(Sight):
             raise Refused(f"{what}: arm first (the label must read AWAITING CALIBRATION)")
         if self.worker is not None:
             raise Refused(f"{what}: wait until the arm has finished")
+        self._not_parking(what)
 
     def _small(self, name, fn):
         """Run one small action (a nudge, the gripper) in the background so that the grip, the stop button and the
@@ -518,6 +543,7 @@ class Session(Sight):
         with self.lock:
             if not (self.connected and self.gate.armed and self.calibrated and self.worker is None):
                 raise Refused("teaching again: only when ARMED and idle")
+            self._not_parking("teaching again")
             self.draft, self.teaching, self.calibrated = copy.deepcopy(self.spots), True, False
             self.guard.lim = self._jog_limits()
             self.say("AWAITING CALIBRATION: teach the spots again")
@@ -569,6 +595,7 @@ class Session(Sight):
         with self.lock:
             if self.phase() != "ARMED":
                 raise Refused(f"a move can only be started when ARMED (now: {self.phase()})")
+            self._not_parking("a move")
             if self.thing_at is None:
                 raise Refused("say first on which spot the thing stands")
             count = int(count)
@@ -593,6 +620,7 @@ class Session(Sight):
         with self.lock:
             if self.phase() != "ARMED":
                 raise Refused(f"a tower can only be started when ARMED (now: {self.phase()})")
+            self._not_parking("a tower")
             self.spots.grasp(on)
             feeds = [n for n in sorted(self.spots.at) if n != on][:6]
             n, h = len(feeds), float(block_mm)
@@ -646,6 +674,7 @@ class Session(Sight):
         with self.lock:
             if self.phase() != "ARMED":
                 raise Refused(f"only when ARMED (now: {self.phase()})")
+            self._not_parking("putting it down")
             self.spots.grasp(dst)
             sp, here, P = self.spots, self.guard.where(), self.P
             gd = sp.grasp(dst)
@@ -686,6 +715,110 @@ class Session(Sight):
             self.say(f"putting the held block down on {dst}")
             self.worker = threading.Thread(target=run, daemon=True)
             self.worker.start()
+
+    # ------------------------------------------------------------------ the other arm: out of the way
+    def _other(self):
+        """The arm that is NOT this session's and can be folded away (a real arm with a resting pose), or None. Only
+        offered when this session's arm is a real one too: the stand-in has no neighbour."""
+        if not self.connected or not self.arms[self.chosen].get("ip"):
+            return None
+        return next((k for k, a in self.arms.items() if k != self.chosen and a.get("ip") and a.get("park") is not None), None)
+
+    def _not_parking(self, what):
+        p = self.parking
+        if p is not None and p["busy"]:
+            raise Refused(f"{what}: wait until the {p['label'].lower()} is out of the way")
+
+    def _stop_park(self, why, latch):
+        """Stop the other arm if it is being folded away (at its next poll). Returns its thread, to wait for."""
+        p = self.parking
+        if p is None or not p["busy"]:
+            return None
+        p["cancel"] = why  # seen by the run if its guard is not made yet ...
+        p["gate"].armed = False
+        g = p.get("guard")  # ... and by the guard if it is
+        if g is not None:
+            g.abort(why, latch=latch)
+        return p["thread"]
+
+    def park_other(self):
+        """Fold the other arm away to the lab's resting pose (`park.py`): open its gripper, come up, go to the lab's
+        waypoint in front of it, fold. Only while this session's arm stands still, and it moves only while the
+        hold-to-run switch of this session is held, as everything else does. Its own arm is never touched."""
+        with self.lock:
+            if not self.connected:
+                raise Refused("start a session first: the other arm moves only with the session's hold-to-run switch")
+            key = self._other()
+            if key is None:
+                raise Refused("there is no other arm to move out of the way" + (" (the stand-in arm has none)" if self.fake else ""))
+            a = self.arms[key]
+            name = a["label"].lower()
+            if self.parking is not None and self.parking["busy"]:
+                raise Refused(f"the {name} is being moved already")
+            if self.worker is not None:
+                raise Refused(f"wait until the {self.arms[self.chosen]['label'].lower()} has finished")
+            if self.park_latched:
+                raise Refused(f"the {name} was stopped ({self.park_latched}): look at it, then end this session and start a new one")
+            if self.reach.get(key) is False:
+                raise Refused(f"the {name} does not answer at {a['ip']}: is it switched on?")
+            self.log_dir.mkdir(parents=True, exist_ok=True)
+            gate = Gate(self.dm)
+            gate.armed = True
+            job = dict(key=key, label=a["label"], busy=True, steps=[], i=None, outcome=None, gate=gate, guard=None, cancel=None)
+            job["thread"] = threading.Thread(target=self._park_run, args=(job,), daemon=True)
+            self.parking = job
+            self.say(f"{name}: out of the way, as the lab's Rehome does it (connecting; it moves only while " + ("MOVING is on)" if self.hold == "page" else "the grip is held)"))
+            job["thread"].start()
+
+    def _park_run(self, job):
+        key = job["key"]
+        a, name, arm, outcome, stopped = self.arms[key], job["label"].lower(), None, "", None
+        try:
+            arm = a["make"]()
+            try:
+                arm.connect()
+            except Exception as e:  # noqa: BLE001  whatever the SDK raises
+                raise Refused(f"no connection at {a['ip']}: {type(e).__name__}: {e}") from e
+            if hasattr(arm, "advance"):  # a stand-in (tests): it needs a clock of its own
+                run_fake_clock(arm, self.fake_speed, alive=lambda: job["busy"])
+            outcome = fold_away(arm, job["gate"], key, a.get("down", (0.0, 0.0, -1.0)), job, log_path=self.log_dir / f"park_{key}.jsonl", say=self.say,
+                                limit_kw=self.limit_kw, guard_kw=self.guard_kw, open_counts=self.P.open_counts)
+        except Refused as e:
+            outcome = f"not moved: {e}"
+        except Released as e:
+            outcome = f"stopped where it was: {e}"
+        except (Blocked, ArmFault) as e:  # something held it, or its controller said no: a person looks before it moves again
+            outcome = stopped = f"stopped where it was: {e}"
+        except Exception as e:  # noqa: BLE001  a mistake in the program itself: stop that arm and say so
+            outcome = stopped = f"stopped: the program failed ({type(e).__name__}: {e})"
+            try:
+                arm.stop()
+            except Exception:  # noqa: BLE001
+                pass
+            raise
+        finally:
+            if arm is not None:
+                try:
+                    arm.disconnect()
+                except Exception as e:  # noqa: BLE001
+                    self.say(f"{name}: while disconnecting: {type(e).__name__}: {e}")
+            with self.lock:
+                job.update(busy=False, outcome=outcome, i=None)
+                if stopped and self.parking is job:
+                    self.park_latched = stopped
+            self.say(f"{name}: {outcome}")
+
+    def other_state(self):
+        """For the page: the other arm, whether it answers, and how folding it away goes (None: there is none)."""
+        key = self._other()
+        if key is None:
+            return None
+        a, p = self.arms[key], self.parking if (self.parking is not None and self.parking["key"] == key) else None
+        busy, answers = bool(p and p["busy"]), self.reach.get(key)
+        why = ("it is being moved" if busy else f"wait until the {self.arms[self.chosen]['label'].lower()} has finished" if self.worker is not None
+               else "it was stopped: end this session and start a new one to try again" if self.park_latched else f"no answer at {a['ip']}" if answers is False else "")
+        return dict(key=key, label=a["label"], ip=a["ip"], answers=answers, busy=busy, steps=list(p["steps"]) if p else [], i=p["i"] if p else None,
+                    outcome=p["outcome"] if p else None, can=not why, why=why, held=bool(self.dm.held()))
 
     def next_step(self):
         self._next.set()
@@ -887,6 +1020,12 @@ class Session(Sight):
         return "RUNNING" if (self.gate.held() and not (self.job or {}).get("waiting")) else "PAUSED"
 
     def hint(self):
+        p = self.parking
+        if p is not None and p["busy"]:
+            name, page = p["label"], self.hold == "page"
+            if self.dm.held():
+                return f"The {name.lower()} is moving out of the way. " + ("The MOVING button, the space bar or Esc stop it." if page else "Let go of the grip to pause it.")
+            return f"{name}: ready to move out of the way. " + ("Switch MOVING on (top bar) and watch the space between the arms." if page else "Hold the grip and watch the space between the arms.")
         text = self._hint()
         if self.hold == "page":  # the page's own key is switched on and off, not held
             for old, new in (("Moving while the grip is held. Let go to pause.", "Moving. The MOVING button, the space bar or Esc stop it."), ("LET GO of the switch once, then hold it again.", "Click the MOVING button again."),
@@ -918,7 +1057,7 @@ class Session(Sight):
             out = dict(phase=ph, hint=self.hint(), ended=self.ended, fake=self.fake, hold=self.hold, chosen=self.chosen, connected=self.connected, key_hold=self.key_hold,
                        arms=[dict(key=k, label=a["label"], ip=a.get("ip"), answers=None if a.get("ip") is None else self.reach.get(k),
                                   up=[-float(v) for v in a.get("down", (0.0, 0.0, -1.0))]) for k, a in self.arms.items()],
-                       scene=self.scene_state(), feeds=self.feeds is not None,
+                       scene=self.scene_state(), feeds=self.feeds is not None, other=self.other_state(),
                        calibration=dict(teaching=self.teaching, done=self.calibrated, spots=spots, lift_mm=None if sp is None else sp.lift, saved=self.saved(), note=self.note,
                                         busy=bool(self.teaching and self.worker is not None)),
                        thing_at=self.thing_at, log=list(self.lines)[-40:], stack=self.stack, drop_mm=self.P.drop_mm, eye=self.sight_state(),

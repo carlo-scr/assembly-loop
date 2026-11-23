@@ -27,6 +27,13 @@ from .arms import rpy_matrix, twist_deg
 from .guard import Limits, Refused
 
 
+def per_arm(path, side):
+    """The file of one arm: the right arm keeps the name as given (its places and its camera fit were made before
+    there were two arms), every other arm has its own beside it: spots.json -> spots_left.json, spots_stand-in.json."""
+    path = Path(path)
+    return path if side in (None, "right") else path.with_name(f"{path.stem}_{side}{path.suffix}")
+
+
 def tool_axis(rpy_deg):
     """The gripper's own axis (the direction it points) in the base frame, from the controller's roll / pitch / yaw."""
     return rpy_matrix(rpy_deg)[:, 2]

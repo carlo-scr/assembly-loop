@@ -13,7 +13,7 @@ function say(text, good) {  // a refusal (red, until clicked) or, with `good`, a
 }
 $("msg").onclick = () => say("");
 // A task that is asked for puts the page's own switch to off first (nothing starts before the switch is clicked for it).
-const BIG = ["/api/level", "/api/find_table", "/api/move", "/api/tower", "/api/show_table", "/api/build_seen", "/api/build_design", "/api/put_held", "/api/calibrate"];
+const BIG = ["/api/level", "/api/find_table", "/api/move", "/api/tower", "/api/show_table", "/api/build_seen", "/api/build_design", "/api/put_held", "/api/calibrate", "/api/park"];
 async function post(path, body) {
   say(""); if (BIG.includes(path)) { halt(); big = true; }
   try {
@@ -59,15 +59,15 @@ function render(s) {
     $("holdsub").textContent = "Quest grip" + (q.grip == null ? "" : " " + Number(q.grip).toFixed(2)) + (q.frames ? ` · ${q.hz}/s · longest gap ${q.gap_ms} ms` : " · no signal yet");
     $("hold").title = "Squeeze past halfway to hold. The red emergency stop stays in reach.";
   } else { $("held").textContent = "no session"; $("holdsub").textContent = "hold-to-run starts with the session"; $("hold").title = ""; }
-  const active = busy || !!c.busy; if (big && wasActive && !active) { big = false; halt(); } wasActive = active;  // a task has ended: off
+  const active = busy || !!c.busy || !!(s.other && s.other.busy); if (big && wasActive && !active) { big = false; halt(); } wasActive = active;  // a task has ended: off
   $("p_teach").classList.toggle("nokeys", s.hold === "page"); $("armnote").textContent = "Arming moves nothing. The arm moves only during a move, and only while " + (s.hold === "page" ? "MOVING is switched on (top bar)." : "the grip is held.");
 
   // ---- the sequence
   const ready = (s.checks || []).length > 0 && s.checks.every(k => k.ok);
   const rung = {"OFF": [1, 0, 0, 0, 0], "STOPPED": [1, 0, 0, 0, 0], "DISARMED": [2, ready ? 2 : 1, ready ? 1 : 0, 0, 0], "AWAITING CALIBRATION": [2, 2, 2, 1, 0]}[ph] || [2, 2, 2, 2, 1];
   rung.forEach((v, i) => { const li = $("r" + (i + 1)); li.className = ["todo", "cur", "done"][v]; li.querySelector(".n").textContent = v === 2 ? "✓" : i + 1; });
-  const sums = [(s.arms.find(x => x.key === s.chosen) || {}).label || "", ready ? "all three hold" : "", "switched on", c.done ? `${c.spots.map(x => x.name).join(", ")} · lift ${c.lift_mm} mm` : "", ""];
-  sums.forEach((t, i) => { $("r" + (i + 1) + "sum").textContent = t ? "· " + t : ""; });
+  const oth = otherArm(s), sums = [[(s.arms.find(x => x.key === s.chosen) || {}).label || "", oth].filter(Boolean).join(" · "), ready ? "all three hold" : "", "switched on", c.done ? `${c.spots.map(x => x.name).join(", ")} · lift ${c.lift_mm} mm` : "", ""];
+  sums.forEach((t, i) => { $("r" + (i + 1) + "sum").textContent = t ? "· " + t : ""; $("r" + (i + 1) + "sum").title = t; });
   show("s_off", !s.connected); show("s_on", s.connected); show("startbtn", !s.connected); show("endbtn", s.connected);
   once("arms", s.arms.map(a => [a.key, a.label, a.ip, a.answers]), () => {
     const keep = picked();
@@ -166,6 +166,16 @@ function render(s) {
   window.HOLD = s.connected ? s.hold : null; window.PHASE = ph; window.KEYHOLD = !!s.key_hold; window.BUSY = !!c.busy;
   if (viewer) viewer.setState(s, side());
 }
+function otherArm(s) {  // the other arm of the rig: a button in the Session rung folds it out of the way; returns a few words for that rung
+  const o = s.connected ? s.other : null, b = $("o_btn"); show("o_btn", !!o); if (!o) return "";
+  const name = o.label.toLowerCase(), now = o.busy ? (o.i != null && o.steps.length ? o.steps[o.i] : "getting ready") : "";
+  b.disabled = !o.can; b.classList.toggle("busy", o.busy);
+  b.textContent = o.busy ? (o.i != null && o.steps.length ? `${o.label}: ${o.i + 1} of ${o.steps.length}` : `${o.label}: …`) : `Move ${name} away`;
+  b.title = o.busy ? `${o.label}: ${now}` + (o.held ? "" : (s.hold === "page" ? ". Switch MOVING on to go on." : ". Hold the grip to go on."))
+    : (o.why ? `${o.label}: ${o.why}.` : `${o.label} (${o.ip}): opens its gripper, comes straight up, goes to the lab's waypoint in front of it and folds into the lab's resting pose, slowly, as the lab's Rehome does. It moves only while ` + (s.hold === "page" ? "MOVING is on" : "the grip is held") + ". Watch the space between the arms.")
+    + (o.outcome && !o.busy ? ` Last time: ${o.outcome}.` : "");
+  return o.busy ? `${name}: ${now}` : (o.outcome ? `${name} ${o.outcome.startsWith("out of the way") ? "is out of the way" : o.outcome.startsWith("already") ? "is out of the way" : o.outcome}` : (o.answers === false ? `${name}: no answer at ${o.ip}` : ""));
+}
 function pickArm() { const k = picked(); show("questrow", k === "stand-in" || window.KEYHOLD); if (viewer && last) viewer.setState(last, side()); }
 let asking = 0;
 async function tick() {  // one question at a time: answers that are slow must not pile up in the browser
@@ -197,6 +207,7 @@ $("spotbtn").onclick = () => post("/api/spot", {name: $("spotname").value}); $("
 $("armbtn").onclick = () => post("/api/arm", {on: true}); $("disbtn").onclick = () => post("/api/arm", {on: false});
 $("thing").onchange = () => { if ($("thing").value) post("/api/thing", {spot: $("thing").value}); };
 $("gobtn").onclick = () => post("/api/move", {dst: $("dst").value || null, count: +$("count").value, rehearse: $("rehearse").checked, step: $("step").checked});
+$("o_btn").onclick = () => post("/api/park");
 $("nextbtn").onclick = () => post("/api/next"); $("phbtn").onclick = () => post("/api/put_held", {dst: $("ph_on").value});
 const tower = what => post("/api/tower", {on: $("tw_on").value, block_mm: +$("tw_h").value, n_now: $("tw_n").value === "" ? null : +$("tw_n").value, what: what, rounds: +$("tw_r").value, rehearse: $("rehearse").checked, step: $("step").checked});
 $("tw_build").onclick = () => tower("build"); $("tw_down").onclick = () => tower("down"); $("tw_loop").onclick = () => tower("loop");

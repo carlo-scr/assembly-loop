@@ -345,6 +345,8 @@ def make_server(session, port=8777):
             session.tower(str(b.get("on")), b.get("block_mm"), str(b.get("what", "build")), b.get("rounds", 1), b.get("n_now"), bool(b.get("rehearse")), bool(b.get("step")))
         elif path == "/api/next":
             session.next_step()
+        elif path == "/api/park":
+            session.park_other()
         elif path == "/api/put_held":
             session.put_held(str(b.get("dst")))
         elif path == "/api/look":

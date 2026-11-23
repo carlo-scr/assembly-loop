@@ -13,6 +13,8 @@ What the real arm is asked to do, and nothing else:
     controller solves all joints anew, so the guard watches every joint while it runs (`Guard.level`).
   - pause, resume and stop such a move
   - open the gripper, or close it fully and let it stall on the brick (the lab's way of gripping)
+  - for the OTHER arm only, when asked on the page: fold it away to the lab's resting pose, all seven joints at once
+    (`move_joints`), from the lab's waypoint in front of it (`park.py`; the guard sends it in pieces of a few degrees)
 It never streams targets (servo mode), never clears a controller error, never changes a controller setting (payload,
 collision sensitivity, boundaries).
 
@@ -145,6 +147,7 @@ class FakeArm:
         self.turn_sign, self.turn_stuck = 1.0, False  # which way the gripper spins for +joint 7; a gripper that is held and cannot turn
         self.tilt, self.swing_deg = None, 0.0  # a tilt under way: [wanted rpy, seconds left]; how far a joint jumps during one (to try the guard)
         self.widths, self.turned = {}, {}  # a brick's width across the jaws [mm] (if not known: BRICK_COUNTS); how far each was turned about up [deg] while held
+        self.q6, self.jtarget, self.jspeed = np.zeros(6), None, 0.0  # joints 1 to 6 (only folding the arm away moves them; the flange stays put here); a joint move under way
 
     # --- simulated time
     def advance(self, dt):
@@ -152,7 +155,17 @@ class FakeArm:
         if self.fault_when is not None and not self.err:
             self.err = int(self.fault_when(self) or 0)
         if self.err:
-            self.target = self.turn_target = self.tilt = None
+            self.target = self.turn_target = self.tilt = self.jtarget = None
+        if self.jtarget is not None and not self.paused and not self.stopped:  # all joints together, each arriving at the same time
+            now = np.r_[self.q6, self.j7]
+            d = self.jtarget - now
+            far, step = float(np.max(np.abs(d))), self.jspeed * dt
+            now = self.jtarget.copy() if step >= far else now + d * (step / far)
+            if step >= far:
+                self.jtarget = None
+            self.q6, self.j7 = now[:6], float(now[6])
+            if not self.turn_stuck:
+                self.j7_real = self.j7
         if self.tilt is not None and not self.paused and not self.stopped:
             self.tilt[1] -= dt
             if self.tilt[1] <= 0.0:
@@ -211,7 +224,7 @@ class FakeArm:
         return self.p - self.plan
 
     def joints(self, measured=True):
-        return [0.0] * 6 + [self.j7_real if measured else self.j7]
+        return [float(v) for v in self.q6] + [self.j7_real if measured else self.j7]
 
     def joint_lag_deg(self):
         return abs(self.j7_real - self.j7)
@@ -247,7 +260,16 @@ class FakeArm:
         return "" if far is None or float(np.linalg.norm(xyz)) <= far else "the arm cannot reach that far"
 
     def joints_now(self):
-        return [self.swing_deg if self.tilt is not None else 0.0] * 6 + [self.j7]
+        return [float(v) + (self.swing_deg if self.tilt is not None else 0.0) for v in self.q6] + [self.j7]
+
+    def move_joints(self, angles, speed, acc):
+        if not self.enabled or self.stopped:
+            raise ArmFault("a joint move was sent to an arm that is not enabled")
+        self.jtarget, self.jspeed = np.array(angles[:7], float), float(speed)
+        self.log.append(("joints", self.t, tuple(float(v) for v in angles[:7]), float(speed)))
+
+    def gripper_now(self):
+        return int(self.counts)
 
     def joints_view(self):
         """Joint angles for the page's model of the arm (the stand-in has none of its own: a posture that reaches its
@@ -256,7 +278,7 @@ class FakeArm:
         return [float(v) for v in self._view]
 
     def moving_now(self):
-        return (self.target is not None or self.turn_target is not None or self.tilt is not None) and not self.paused and not self.stopped
+        return (self.target is not None or self.turn_target is not None or self.tilt is not None or self.jtarget is not None) and not self.paused and not self.stopped
 
     def pause(self):
         self.paused = True
@@ -267,7 +289,7 @@ class FakeArm:
         self.log.append(("resume", self.t))
 
     def stop(self):
-        self.stopped, self.target, self.turn_target, self.tilt = True, None, None, None
+        self.stopped, self.target, self.turn_target, self.tilt, self.jtarget = True, None, None, None, None
         self.log.append(("stop", self.t))
 
     def grip(self, counts):
@@ -410,6 +432,19 @@ class XArm:
         here[6] += float(deg)
         self._ok(self.api.set_servo_angle(angle=here, speed=float(speed), mvacc=float(acc), wait=False, is_radian=False), "set_servo_angle")
 
+    def move_joints(self, angles, speed, acc):
+        """All seven joints to these angles [deg], in joint space, as the lab's own Rehome does (mode 0, planned). Only
+        `Guard.joints_to` asks for this, and only to fold the other arm away (`park.py`)."""
+        self._ok(self.api.set_servo_angle(angle=[float(v) for v in angles[:7]], speed=float(speed), mvacc=float(acc), wait=False, is_radian=False), "set_servo_angle")
+
+    def gripper_now(self):
+        """Where the gripper is [counts], or None if it does not say. (A gripper with a fault answers with a bare code
+        instead of (code, position): SDK 1.18.4.)"""
+        got = self.api.get_gripper_position()
+        if not isinstance(got, (tuple, list)) or len(got) < 2 or got[0] != 0 or got[1] is None:
+            return None
+        return int(got[1])
+
     def pose_abs(self, xyz, rpy, speed, acc):
         """Go to a pose given in full: the same place, the gripper tilted as in `rpy`. Only `Guard.level` asks for this."""
         self._ok(self.api.set_position(x=float(xyz[0]), y=float(xyz[1]), z=float(xyz[2]), roll=float(rpy[0]), pitch=float(rpy[1]), yaw=float(rpy[2]), relative=False,
@@ -438,8 +473,8 @@ class XArm:
         last, still, t0 = None, 0, time.monotonic()
         while time.monotonic() - t0 < 4.0:
             time.sleep(0.1)
-            code, pos = self.api.get_gripper_position()
-            if code != 0 or pos is None:
+            pos = self.gripper_now()
+            if pos is None:
                 continue
             still = still + 1 if (last is not None and abs(pos - last) <= 2) else 0
             last = pos
@@ -452,8 +487,7 @@ class XArm:
     def status(self):
         err, warn = self._err_warn()
         _, state = self.api.get_state()
-        code, grip = self.api.get_gripper_position()
         return dict(error=err, warn=warn, state=int(state), mode=int(getattr(self.api, "mode", -1)), pose=self.pose().round(2).tolist(),
                     joints_planned=[round(v, 3) for v in self.joints(False)], joints_measured=[round(v, 3) for v in self.joints(True)],
-                    gripper=None if code != 0 else grip, tcp_load=getattr(self.api, "tcp_load", None),
+                    gripper=self.gripper_now(), tcp_load=getattr(self.api, "tcp_load", None),
                     collision_sensitivity=getattr(self.api, "collision_sensitivity", None), tcp_offset=getattr(self.api, "tcp_offset", None))

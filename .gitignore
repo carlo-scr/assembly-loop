@@ -3,6 +3,8 @@ assembly_logs/
 brickloop_logs/
 spots.json
 camera.json
+spots_*.json
+camera_*.json
 blocks.json
 look.jpg
 plate*.json

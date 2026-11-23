@@ -17,7 +17,9 @@
      of any OTHER move the same comparison is made with a wider limit (`free_lag_mm`): there, being held back means
      the arm has run into something, which stops the arm and ends the run;
   7. TURNS the gripper only by spinning its last joint, in pieces, each checked the same way (`turn_by`, `turn_to`);
-  8. writes every request and every refusal to a log.
+  8. moves all joints at once (`joints_to`) only to fold the OTHER arm away (`park.py`), in pieces of a few degrees,
+     each checked the same way;
+  9. writes every request and every refusal to a log.
 
 While a move is under way only the state the controller publishes by itself is read (no call that can block), so the
 switch and the stall watch are checked every `poll_s`.
@@ -314,6 +316,69 @@ class Guard:
                 return
             if self.clock() - t0 - held_back > budget:
                 self._fail(f"{what}: the turn did not arrive ({abs(self.arm.j7_now() - goal):.1f} deg short)")
+            self.sleep(self.poll_s)
+
+    def joints_to(self, goal_deg, what="", speed_deg_s=None, acc_deg_s2=None, piece_deg=5.0):
+        """All seven joints to `goal_deg` [deg], in joint space, in pieces in which no joint moves more than
+        `piece_deg`, at `speed_deg_s` (the lab's 20 deg/s unless given). Before each piece the arm must be where the
+        last one ended; after each, the measured joints are compared with the planned ones: apart means something
+        holds the arm, and it stops there (Blocked). This is the one move in which the whole arm swings through joint
+        space; only `park.py` asks for it, from the lab's waypoint, never from over the table."""
+        self._alive()
+        goal = np.asarray(goal_deg, float)[:7]
+        speed = self.lim.turn_speed_deg_s if speed_deg_s is None else float(speed_deg_s)
+        acc = self.lim.turn_acc_deg_s2 if acc_deg_s2 is None else float(acc_deg_s2)
+        if not 0.0 < speed <= 30.0:
+            self.note("refused", what=what, why="joint speed", speed=speed)
+            raise Refused(f"{what}: {speed:g} deg/s is not within (0, 30]")
+        start = np.asarray(self.arm.joints(False), float)[:7]
+        n = max(int(np.ceil(float(np.max(np.abs(goal - start))) / float(piece_deg) - 1e-9)), 1)
+        for i in range(n):
+            here = np.asarray(self.arm.joints(False), float)[:7]
+            was = start + (goal - start) * i / n
+            if float(np.max(np.abs(here - was))) > 2.0:  # the arm is not where the last piece left it
+                self._fail(f"{what}: a joint is {np.max(np.abs(here - was)):.1f} deg from where the last piece ended")
+            self._joint_piece(start + (goal - start) * (i + 1) / n, speed, acc, what)
+            self.sleep(self.lim.settle_s)
+            try:
+                behind = float(self.arm.joint_lag_deg())
+            except ArmFault as e:
+                self._fail(str(e))
+            if behind > self.lim.turn_stall_deg:
+                self.arm.stop()
+                self.note("blocked", what=what, behind_deg=behind)
+                raise Blocked(f"{what}: a joint is {behind:.1f} deg behind its plan: something is holding the arm")
+
+    def _joint_piece(self, goal, speed, acc, what):
+        self._alive()
+        self._check_abort()
+        self._wait_hold(what, self.start_s)
+        self._check_fault()
+        piece = float(np.max(np.abs(goal - np.asarray(self.arm.joints(False), float)[:7])))
+        if piece < 1e-3:
+            return
+        self.note("joints", what=what, deg=piece, goal=goal)
+        try:
+            self.arm.move_joints(goal, speed, acc)
+        except ArmFault as e:
+            self._fail(str(e))
+        t0, budget, held_back = self.clock(), piece / speed * 3.0 + 3.0, 0.0
+        while True:
+            self._check_abort()
+            self._check_fault(now=True)
+            if not self.deadman.held():
+                t_p = self.clock()
+                self.arm.pause()
+                self.note("pause", what=what)
+                self._wait_hold(what, self.resume_s, moving=True)
+                self.arm.resume()
+                self.note("resume", what=what)
+                held_back += self.clock() - t_p
+            off = float(np.max(np.abs(np.asarray(self.arm.joints_now(), float)[:7] - goal)))
+            if off <= 0.5 and not self.arm.moving_now():
+                return
+            if self.clock() - t0 - held_back > budget:
+                self._fail(f"{what}: the joints did not arrive ({off:.1f} deg short)")
             self.sleep(self.poll_s)
 
     def turn_to(self, rpy_deg, what=""):
