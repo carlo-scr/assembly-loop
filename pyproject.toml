@@ -11,6 +11,7 @@ dependencies = ["numpy>=1.21"]
 real = ["xarm-python-sdk==1.18.4"]  # the arm's SDK, at the version the lab's own tools pin
 eyes = ["opencv-python-headless>=4.8"]  # the camera that looks at the table
 dev = ["pytest>=8", "ruff>=0.5", "opencv-python-headless>=4.8"]
+ui = ["playwright>=1.45"]  # optional browser tests; install Chromium with `playwright install chromium`
 
 [project.scripts]
 assembly-loop = "assemblyloop.__main__:main"
