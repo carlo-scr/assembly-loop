@@ -77,7 +77,7 @@ def _plain(v):
 
 
 class Recorder:
-    def __init__(self, ses, campaign, rate_hz=30.0, size=(1280, 720), fps=30.0, quality=8, validate=True):
+    def __init__(self, ses, campaign, rate_hz=30.0, size=(640, 480), fps=30.0, quality=8, validate=True, cameras="rig"):
         self.ses, self.campaign = ses, campaign if isinstance(campaign, Campaign) else Campaign(campaign)
         self.rate, self.size, self.fps, self.quality, self.do_validate = float(rate_hz), tuple(size), float(fps), int(quality), bool(validate)
         self.lock = threading.RLock()
@@ -87,7 +87,15 @@ class Recorder:
         side = ses.chosen
         self.R = world_from_base(ses.arms[side].get("down", (0.0, 0.0, -1.0)))
         feeds = getattr(ses, "feeds", None)
-        self.cams = feeds.cameras_of(side) if feeds is not None else []
+        # Every camera of the rig, whichever arm moves (cameras="rig"): one camera set for every episode, as in the lab's
+        # datasets (lego_assemblies_v2 has all six), so that both arms' episodes, and later both at once, are one dataset.
+        # cameras="arm": only the cameras of this session's arm. The stand-in always records its own.
+        if feeds is None:
+            self.cams = []
+        elif cameras == "rig" and not ses.fake:
+            self.cams = [dict(id=o.id, key=o.key, label=o.label, device=o.device) for o in feeds.owners if {"right", "left"} & set(o.arms)]
+        else:
+            self.cams = feeds.cameras_of(side)
         if feeds is not None and self.cams:
             feeds.record([c["id"] for c in self.cams], self.size, self.fps)
         self.provenance = self._provenance()

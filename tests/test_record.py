@@ -247,3 +247,45 @@ def test_the_page_makes_campaigns_and_switches_recording(ses):
     finally:
         srv.shutdown()
         srv.server_close()
+
+
+def test_with_a_campaign_given_every_session_records_from_its_start_and_a_real_arm_records_every_rig_camera(tmp_path):
+    from assemblyloop.feeds import rig_cameras
+    from assemblyloop.record.recorder import Recorder
+
+    feeds = Feeds([dict(id="cam_a", key="head_left", label="A", arms=("stand-in",), make=Cam)], fps=5.0)
+    s = Session({"stand-in": dict(label="Stand-in arm (no robot)", ip=None, make=FakeArm)}, spots_path=tmp_path / "spots.json", log_dir=tmp_path / "logs", probe=lambda ip: False,
+                blocks_path=tmp_path / "blocks.json", feeds=feeds, campaigns_root=tmp_path / "campaigns")
+    s.record_default, s.record_auto = "woodblocks", True
+    try:
+        s.start("stand-in", "page")
+        st = s.record_state()
+        assert st["on"] and st["campaign"] == "woodblocks" and (tmp_path / "campaigns" / "woodblocks" / "campaign.json").exists()  # made, and recording
+        s.end()
+        assert s.rec is None
+    finally:
+        s.close()
+
+    class Rig:  # a real arm's session, as far as the recorder looks at it
+        fake, chosen, arms, P, guard_kw, limit_kw, spots, setup = False, "left", dict(left=dict(label="Left arm", ip="192.0.2.2", down=(0.0, 0.7071, -0.7071))), None, {}, {}, None, None
+        feeds = Feeds(rig_cameras())
+
+        class arm:
+            @staticmethod
+            def status():
+                return {}
+
+        def catalogue(self):
+            raise RuntimeError("none")
+
+    from assemblyloop.cycle import Params
+
+    rig = Rig()
+    rig.P = Params()
+    rec = Recorder(rig, Campaign.create(tmp_path / "c2", "both"), validate=False)
+    try:
+        assert [c["key"] for c in rec.cams] == ["head_left", "head_right", "gripper_right_top", "gripper_right_bottom", "gripper_left_top", "gripper_left_bottom"]  # all six, whichever arm
+        assert rec.size == (640, 480) and rig.feeds.recording["ids"] == {c["id"] for c in rec.cams}
+    finally:
+        rig.feeds.record(None)
+        rig.feeds.close()

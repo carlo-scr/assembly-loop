@@ -64,6 +64,20 @@ class Recording:
             out.update(rec.status())
         return out
 
+    def _rec_auto(self):
+        """With --record <campaign>: every session records into it from its start (the campaign is made if missing)."""
+        name = getattr(self, "record_default", None)
+        if not name or not getattr(self, "record_auto", False) or self.rec is not None:
+            return
+        try:
+            try:
+                Campaign.open(self.campaigns_root, name)
+            except ValueError:
+                self.record_new_campaign(name)
+            self.record_on(name)
+        except Exception as e:  # noqa: BLE001  a recording that cannot start must not stop the session
+            self.say(f"recording did not start ({type(e).__name__}: {e}): switch it on with REC")
+
     def _rec_close(self, why):
         """The session ends: an open episode is finished as stopped, the cameras let go."""
         rec, self.rec = self.rec, None

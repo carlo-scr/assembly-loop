@@ -255,10 +255,12 @@ down is one **episode**. Set up once on the laptop: `pip install -e ".[real,eyes
 
 1. **A campaign** (a named collection): `python -m assemblyloop campaign new "blocks pickplace v1"`, or on the
    page: **REC** (top right) → New campaign.
-2. **Record:** REC → choose the campaign → Record. Then build towers and designs as usual; every block is an
-   episode. The button shows the count; a pulsing dot while an episode is being recorded. Rehearsals are not
-   recorded. While recording, the cameras of the arm stay open at 1280 × 720, 30 a second (`--video_w`,
-   `--video_h`, `--video_fps`).
+2. **Record:** start the dashboard with `--record woodblocks` and every session records into that campaign from
+   its start (made if missing), or press REC → choose the campaign → Record. Then build towers and designs as usual;
+   every block is an episode. The button shows the count; a pulsing dot while an episode is being recorded.
+   Rehearsals are not recorded. While recording, **all six cameras** of the rig stay open at 640 × 480, 30 a second,
+   whichever arm moves, as in the lab's recorder and its datasets: every episode has the same cameras, so episodes of
+   either arm (and later both) are one dataset (`--video_w`, `--video_h`, `--video_fps`).
 3. **Send it to Hugging Face as it comes**, in a second terminal:
    `python -m assemblyloop upload --campaign woodblocks --repo carloscr/woodblocks --watch` (the repo is remembered
    by the campaign: next time `--repo` can be left out). Every five minutes it checks the new episodes, adds the
@@ -282,8 +284,9 @@ interpolated, every video frame one row; added to, never rewritten); `upload` do
 new. The export's `action` is the change of the arm's planned flange position, of its last joint and the gripper's
 target (there is no operator's input: a script made it); every episode says so (`action_source`).
 
-Not yet tried at the rig: the four cameras at 1280 × 720 and 30 a second while the arm moves (the program's share
-of the processor, the USB hub), and the measured joints read 30 times a second next to the arm's own commands.
+Not yet tried at the rig: the six cameras at 640 × 480 and 30 a second while the arm moves (the program's share of
+the processor, the USB hub), and the measured joints read 30 times a second next to the arm's own commands. After
+the first recorded session, `python -m assemblyloop validate --campaign woodblocks` says whether both kept up.
 
 ## Layout
 

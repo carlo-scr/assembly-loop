@@ -9,7 +9,7 @@
 Recording, as data to learn from (the lab's teleoperation workflow; see assemblyloop/record):
   python -m assemblyloop campaign new "blocks pickplace v1"     a campaign: campaigns/blocks-pickplace-v1/
   python -m assemblyloop campaign list | show <name>            every campaign / the episodes of one
-  python -m assemblyloop dashboard --record "blocks pickplace v1"   record every block taken and put down (or switch it on the page)
+  python -m assemblyloop dashboard --record woodblocks      every session records every block taken and put down (or REC on the page)
   python -m assemblyloop validate --campaign <name>             check the episodes (the verdict goes into each run.json)
   python -m assemblyloop export --campaign <name>               the ready ones -> campaigns/<name>/lerobot (LeRobot v2.1, 30 Hz)
   python -m assemblyloop upload --campaign <name> --repo carloscr/woodblocks [--watch]   check, export, send what is new
@@ -243,7 +243,7 @@ def cmd_dashboard(a):
         feeds = Feeds()  # opens no camera until a page asks for pictures
     ses = Session(default_arms(a.right, a.left, a.mount_deg), quest_port=a.quest_port, hand=a.hand, spots_path=a.spots, log_dir=a.log, say=print, camera=camera, key_hold=a.key_hold,
                   feeds=feeds, campaigns_root=a.campaigns, record_kw=dict(size=(a.video_w, a.video_h), fps=a.video_fps))
-    ses.record_default = a.record  # the campaign the page offers first (recording still starts on the page, with a session)
+    ses.record_default, ses.record_auto = a.record, bool(a.record)  # with --record: every session records into it from its start (REC on the page stops it)
     srv = make_server(ses, a.port)
     print(f"dashboard: http://127.0.0.1:{srv.server_address[1]}/   (nothing is connected until you start a session on the page; Ctrl-C here stops the arm and closes)")
     print(f"           http://127.0.0.1:{srv.server_address[1]}/classic   the older page, without the model and the live pictures")
@@ -372,9 +372,9 @@ def main(argv=None):
     s.add_argument("--port", type=int, default=8777)
     s.add_argument("--log", default="assembly_logs")
     s.add_argument("--campaigns", default="campaigns", help="where campaigns are kept (an external drive, say)")
-    s.add_argument("--record", default=None, help="the campaign the page offers first for recording")
-    s.add_argument("--video_w", type=int, default=1280)
-    s.add_argument("--video_h", type=int, default=720)
+    s.add_argument("--record", default=None, help="record every session into this campaign, from its start (made if missing)")
+    s.add_argument("--video_w", type=int, default=640, help="recorded picture size, all six cameras (the lab's recorder: 640 x 480)")
+    s.add_argument("--video_h", type=int, default=480)
     s.add_argument("--video_fps", type=float, default=30.0)
     s = sub.add_parser("campaign")
     s.add_argument("what", choices=("new", "list", "show"))

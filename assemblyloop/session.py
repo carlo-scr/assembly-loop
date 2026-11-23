@@ -226,6 +226,7 @@ class Session(Sight, Recording):
                 run_fake_clock(arm, self.fake_speed, alive=lambda g=self._gen: self._gen == g and self.connected)
             threading.Thread(target=self._monitor, args=(self._gen,), daemon=True).start()
             self.say(f"session started on the {self.arms[choice]['label'].lower()}: connected, read only (DISARMED)")
+            self._rec_auto()  # with --record: every session records, from its start
 
     def end(self, why=None):
         """Stop the arm, let go of the connection and of the Quest's port. With `why` the label reads STOPPED. An
