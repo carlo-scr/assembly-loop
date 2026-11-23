@@ -1,6 +1,6 @@
 # assembly-loop
 
-![The dashboard during a tower build on the stand-in arm: the sequence and the controls on the left, a model of the arm and the camera pictures on the right](docs/dashboard.png)
+![The dashboard with the stand-in arm: session setup and task controls beside the robot view and camera feed](docs/dashboard.png)
 
 Hold-to-run assembly on a UFACTORY xArm 7. One local web page starts a session at the robot, teaches it places, arms
 it, runs a task and stops it. Every motion goes through one guard, and the arm moves only while a person holds the
@@ -9,9 +9,9 @@ grip of a Quest controller.
 Today it moves wooden blocks between places taught by hand and stacks them into a tower. Press-fit bricks and cables
 are meant to follow on the same base.
 
-> **Status, 21 November 2026.** Everything here is tested on a stand-in arm (62 tests). On the real right arm, a session,
+> **Hardware status, 21 November 2026.** Automated testing uses a stand-in arm. On the real right arm, a session,
 > the Quest grip and nudging have run; moving blocks, towers and the camera have not. The first session on the arm
-> follows the rungs below, one at a time. The page that fits one screen (the model of the arm, the live pictures) has
+> follows the rungs below, one at a time. The dashboard's robot model and live pictures have
 > run on the stand-in arm only: its cameras have not been opened on the rig yet. The older page is kept at `/classic`.
 
 ## Run it
@@ -54,7 +54,8 @@ STOP SESSION kept at the top.
   Find the table and the stand-in's demo spots.
 - **Tasks:** separate Move a block, Tower and Camera tabs. Rehearse in the air and One step at a time are shared
   run options and remain checked by default. Camera calibration includes its own source-spot selector, synchronized
-  with the block's known position.
+  with the block's known position. Calibration comes before detection and building; its settings collapse after a
+  successful calibration. Calibration physically moves the block even when air rehearsal is selected.
 - **Execution:** current move, current step, progress and Next step stay together above the task settings. View every
   step opens the full sequence, including on short screens. The last result remains available after a task finishes.
 - **Robot view:** the arm's reported pose, fingertip bounds, taught spots and remaining route. Drag to orbit or choose
@@ -67,6 +68,8 @@ STOP SESSION kept at the top.
 The page follows the computer's light or dark appearance and needs no internet. Its responsive layout does not
 change access: the server still listens only on localhost. A phone-sized screen does not add a touch hold switch;
 real motion still requires the configured Quest grip or the explicitly enabled keyboard hold mode.
+
+[See the mobile layout](docs/dashboard-mobile.png).
 
 Good to know:
 
@@ -124,7 +127,7 @@ One rung at a time. Stop at the first that misbehaves and keep the two log files
    squeezing the Quest grip shows GRIP HELD.
 3. Bring the gripper about 20 cm above the table with nothing near. Let go of the grip and press Arm. If the gripper
    does not point straight down (the lab's teleoperation leaves it tilted), hold the grip and
-   press "Point the gripper down": it tilts 5 degrees at a time with the flange in place, the fingertips swing
+   press "Point gripper down": it tilts 5 degrees at a time with the flange in place, the fingertips swing
    sideways, and it stops by itself if any joint moves much further than the tilt asks for. The label reads AWAITING CALIBRATION. Nothing may move, and "Measured against planned" reads under 1.5 mm.
 4. Hold the grip, set the step to 1 mm and press Up once. Then 5 mm in each direction: each must go where its button
    says.
@@ -166,13 +169,13 @@ It needs OpenCV: `pip install -e ".[real,eyes]"` (with uv: `uv pip install -e ".
    level between the jaws (jaws across its short side), press "Find the table" and hold the grip. The gripper comes
    straight down at 15 mm/s until the bar meets the mat, lets go, and makes the spots itself: T where the bar lies
    (the tower will stand there) and P and Q at opposite corners of the area. Or teach the spots by hand.
-3. **Show the camera the table** (Camera card, once, and again whenever the camera or the table was moved). Lay one
+3. **Show the camera the table** (Camera tab, once, and again whenever the camera or the table was moved). Lay one
    bar flat on a taught spot, the jaws across its short side, select it under "Block is on spot" in Camera calibration, keep
    everything else off the mat, and hold the grip. The arm carries the bar to a dozen places and steps aside for a
    picture after each. From where it put the bar and where the camera saw it, the camera is fitted and kept in
    `camera.json`. The log says within how many millimetres the camera then finds the bar; more than 6 mm is refused.
 4. **Look.** Lay blocks on the mat, apart from each other and away from the tower spot, move the arm out of the
-   camera's view, and press Look. The picture shows what was made out, the order of the tower, and what is left out
+   camera's view, and press Look at the table. The picture shows what was made out, the order of the tower, and what is left out
    and why.
 5. **Build a tower from what it sees.** Rehearse in the air first. Every block is taken across its short side and put
    down the way it lay; tall blocks are held near their top.
@@ -223,3 +226,7 @@ ASSEMBLY_UI_TESTS=1 pytest -q tests/test_dashboard_ui.py
 
 Set `ASSEMBLY_CHROMIUM` to use an existing Chromium binary. Without `ASSEMBLY_UI_TESTS=1`, the normal Python suite
 skips browser tests, so a browser is not required for development or running the dashboard.
+
+The Dashboard checks workflow runs the Python and browser suites together on GitHub Actions. Each run also uploads
+18 review images covering setup, teaching, all three task tabs and a paused task in desktop light, desktop dark and
+mobile layouts. Download `dashboard-review-images` from the workflow run to review them.
