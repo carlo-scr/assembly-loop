@@ -82,14 +82,22 @@ class Campaign:
         self.path = Path(path)
 
     @classmethod
-    def create(cls, root, name, notes=""):
+    def create(cls, root, name, notes="", repo=None):
         path = Path(root) / slugify(name)
         if (path / "campaign.json").exists():
             raise ValueError(f"there is a campaign {path.name!r} already")
         path.mkdir(parents=True, exist_ok=True)
         (path / "campaign.json").write_text(json.dumps(dict(name=str(name).strip(), slug=path.name, created=time.strftime("%Y-%m-%d %H:%M:%S"), created_unix=time.time(),
-                                                            notes=str(notes), program="assembly-loop", layout="swoosh-collect campaigns (recording_<ts>/raw, video)"), indent=2))
+                                                            notes=str(notes), program="assembly-loop", layout="swoosh-collect campaigns (recording_<ts>/raw, video)", repo=repo), indent=2))
         return cls(path)
+
+    @property
+    def repo(self):
+        """The Hugging Face dataset this campaign is uploaded to (one dataset holds one campaign)."""
+        return self.meta.get("repo")
+
+    def set_repo(self, repo):
+        merge_json(self.path / "campaign.json", repo=str(repo))
 
     @classmethod
     def open(cls, root, name):
@@ -132,5 +140,5 @@ class Campaign:
         runs = self.runs()
         ok = [r for r in runs if r.status == "ready" and r.validation.get("ok")]
         good = [r for r in ok if (r.meta.get("outcome") or {}).get("success")]
-        return dict(name=self.name, slug=self.path.name, runs=len(runs), ready=len(ok), succeeded=len(good), failed_validation=sum(1 for r in runs if r.status == "ready" and not r.validation.get("ok")),
+        return dict(name=self.name, slug=self.path.name, repo=self.repo, runs=len(runs), ready=len(ok), succeeded=len(good), failed_validation=sum(1 for r in runs if r.status == "ready" and not r.validation.get("ok")),
                     unfinished=sum(1 for r in runs if r.status != "ready"), upload=read_json(self.path / "upload.json"))

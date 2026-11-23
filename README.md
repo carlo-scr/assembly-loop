@@ -260,9 +260,11 @@ down is one **episode**. Set up once on the laptop: `pip install -e ".[real,eyes
    recorded. While recording, the cameras of the arm stay open at 1280 × 720, 30 a second (`--video_w`,
    `--video_h`, `--video_fps`).
 3. **Send it to Hugging Face as it comes**, in a second terminal:
-   `python -m assemblyloop upload --campaign "blocks pickplace v1" --repo <org>/<dataset> --watch`.
-   Every five minutes it checks the new episodes, adds the ones that passed to the LeRobot export and uploads what
-   is new as one commit. The dataset is private unless `--public`.
+   `python -m assemblyloop upload --campaign woodblocks --repo carloscr/woodblocks --watch` (the repo is remembered
+   by the campaign: next time `--repo` can be left out). Every five minutes it checks the new episodes, adds the
+   ones that passed to the LeRobot export and uploads what is new as one commit. The dataset is private unless
+   `--public`. **One dataset holds one campaign:** to add to the same dataset, record into the same campaign again
+   (any number of sessions); an upload refuses a dataset that belongs to another campaign.
 
 Per episode, in `campaigns/<campaign>/recording_<time>/` (the lab's names):
 

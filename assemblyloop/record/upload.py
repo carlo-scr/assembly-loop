@@ -1,7 +1,12 @@
 """A campaign's export -> a Hugging Face dataset, once or watching: the step after every session, made automatic.
 
-    python -m assemblyloop upload --campaign "blocks pickplace v1" --repo <org>/<name>            once
-    python -m assemblyloop upload --campaign "blocks pickplace v1" --repo <org>/<name> --watch    every few minutes
+    python -m assemblyloop upload --campaign woodblocks --repo carloscr/woodblocks          once (the repo is remembered)
+    python -m assemblyloop upload --campaign woodblocks --watch                            every few minutes
+
+ONE DATASET HOLDS ONE CAMPAIGN: the export numbers its episodes and rewrites its meta files as one dataset, so two
+campaigns sent to one repo would overwrite each other. The repo is kept in campaign.json once given, and an upload
+refuses a repo whose dataset says it belongs to another campaign. To add more episodes to the same dataset, record
+into the same campaign again (any number of sessions, days apart).
 
 Each round: runs that have closed are checked (validate), the ready and passed ones are added to the export, and the
 files that are new or changed since the last upload are sent as ONE commit. The tag `v2.1` (LeRobot's codebase
@@ -48,6 +53,9 @@ def push(campaign, repo_id, private=True, api=None, say=print):
         from huggingface_hub import HfApi
 
         api = HfApi()
+    owner = remote_campaign(api, repo_id)
+    if owner is not None and owner != campaign.name:
+        raise RuntimeError(f"the dataset {repo_id} holds the campaign {owner!r}, not {campaign.name!r}: one dataset holds one campaign (record into {owner!r}, or choose another repo)")
     api.create_repo(repo_id, repo_type="dataset", private=private, exist_ok=True)
     eps = sum(1 for k in changed if k.endswith(".parquet"))
     api.upload_folder(repo_id=repo_id, repo_type="dataset", folder_path=str(out), allow_patterns=changed,
@@ -63,8 +71,26 @@ def push(campaign, repo_id, private=True, api=None, say=print):
     return len(changed)
 
 
+def remote_campaign(api, repo_id):
+    """The campaign the dataset on the hub was made from, or None (no such dataset, or not one of ours)."""
+    try:
+        if not api.file_exists(repo_id, "meta/info.json", repo_type="dataset"):
+            return None
+        from huggingface_hub import hf_hub_download
+
+        info = json.loads(Path(hf_hub_download(repo_id, "meta/info.json", repo_type="dataset", token=getattr(api, "token", None))).read_text())
+        return (info.get("assembly_loop") or {}).get("campaign")
+    except Exception:  # noqa: BLE001  no dataset there yet, or not readable: nothing to protect
+        return None
+
+
 def round_once(campaign, repo_id=None, private=True, api=None, fps=30.0, say=print):
-    """Check, export, upload. Without `repo_id` only check and export."""
+    """Check, export, upload. Without `repo_id` the campaign's own repo, if it has one; else only check and export."""
+    if repo_id and campaign.repo not in (None, repo_id):
+        raise RuntimeError(f"the campaign {campaign.name!r} goes to {campaign.repo}, not {repo_id}: one campaign, one dataset")
+    if repo_id and campaign.repo is None:
+        campaign.set_repo(repo_id)
+    repo_id = repo_id or campaign.repo
     checked = validate_campaign(campaign)
     bad = [n for n, v in checked.items() if not v["ok"]]
     if checked:
@@ -76,7 +102,7 @@ def round_once(campaign, repo_id=None, private=True, api=None, fps=30.0, say=pri
     return dict(checked=len(checked), failed=bad, added=len(added), refused=len(refused), sent=n)
 
 
-def watch(campaign, repo_id, every_s=300.0, private=True, api=None, say=print, rounds=None):
+def watch(campaign, repo_id=None, every_s=300.0, private=True, api=None, say=print, rounds=None):
     """`round_once` every `every_s` seconds, for ever (or `rounds` times). A failing round is written down and tried
     again next time: the network at the rig comes and goes."""
     k = 0

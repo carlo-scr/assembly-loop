@@ -12,7 +12,7 @@ Recording, as data to learn from (the lab's teleoperation workflow; see assembly
   python -m assemblyloop dashboard --record "blocks pickplace v1"   record every block taken and put down (or switch it on the page)
   python -m assemblyloop validate --campaign <name>             check the episodes (the verdict goes into each run.json)
   python -m assemblyloop export --campaign <name>               the ready ones -> campaigns/<name>/lerobot (LeRobot v2.1, 30 Hz)
-  python -m assemblyloop upload --campaign <name> --repo <org>/<dataset> [--watch]   check, export, send what is new
+  python -m assemblyloop upload --campaign <name> --repo carloscr/woodblocks [--watch]   check, export, send what is new
 
 Press-fit bricks on a taught stud plate (command line only; older than the dashboard):
   python -m assemblyloop demo-plate --out plate_demo.json  a made-up taught file, for trying `plan` anywhere
@@ -260,8 +260,8 @@ def cmd_campaign(a):
     from .record.store import Campaign
 
     if a.what == "new":
-        c = Campaign.create(a.campaigns, a.name, a.notes)
-        print(f"campaign {c.name!r}: {c.path}")
+        c = Campaign.create(a.campaigns, a.name, a.notes, a.repo)
+        print(f"campaign {c.name!r}: {c.path}" + (f", uploaded to {a.repo}" if a.repo else ""))
         print(f"record into it: python -m assemblyloop dashboard --record {a.name!r}   (or choose it on the page)")
         return 0
     if a.what == "list":
@@ -303,7 +303,11 @@ def cmd_upload(a):
     from .record.upload import round_once, watch
 
     c = Campaign.open(a.campaigns, a.campaign)
+    if not (a.repo or c.repo):
+        raise SystemExit(f"which dataset? --repo <user or org>/<name> (the campaign {c.name!r} has none yet)")
     if a.watch:
+        if a.repo and c.repo is None:
+            c.set_repo(a.repo)
         watch(c, a.repo, every_s=a.every, private=not a.public)
         return 0
     r = round_once(c, a.repo, private=not a.public)
@@ -376,6 +380,7 @@ def main(argv=None):
     s.add_argument("what", choices=("new", "list", "show"))
     s.add_argument("name", nargs="?", default=None)
     s.add_argument("--notes", default="")
+    s.add_argument("--repo", default=None, help="the Hugging Face dataset it is uploaded to (<user or org>/<name>)")
     s.add_argument("--campaigns", default="campaigns")
     for name in ("validate", "export", "upload"):
         s = sub.add_parser(name)
@@ -388,7 +393,7 @@ def main(argv=None):
         if name == "export":
             s.add_argument("--include_failed", action="store_true", help="also runs that failed their checks (NOT advised)")
         if name == "upload":
-            s.add_argument("--repo", required=True, help="the Hugging Face dataset: <org>/<name>")
+            s.add_argument("--repo", default=None, help="the Hugging Face dataset <user or org>/<name> (remembered by the campaign after the first time)")
             s.add_argument("--watch", action="store_true", help="again every --every seconds, for ever")
             s.add_argument("--every", type=float, default=300.0)
             s.add_argument("--public", action="store_true", help="make the dataset public (the default is private: the cameras may show people)")

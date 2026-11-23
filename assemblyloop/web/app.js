@@ -257,7 +257,7 @@ async function recTick() {
                           ["Uploaded", up.last ? `${up.last} to ${up.repo}` + (rnd.error ? ` · last try failed: ${rnd.error}` : "") : (up.error ? "failed: " + up.error : "not yet")]);
     rows.push(["Folder", r.on ? r.folder : r.root]);
     dl($("rec_stats"), rows);
-    $("rec_cmd").textContent = `python -m assemblyloop upload --campaign "${c.name || "<campaign>"}" --repo <org>/<dataset> --watch`;
+    $("rec_cmd").textContent = `python -m assemblyloop upload --campaign "${c.name || "<campaign>"}"` + (c.repo ? "" : " --repo <user or org>/<dataset>") + " --watch";
   } catch (e) { /* the state poll says what is wrong */ }
 }
 setInterval(recTick, 1500); recTick();

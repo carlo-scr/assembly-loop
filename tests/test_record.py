@@ -158,6 +158,9 @@ class FakeHub:
     def __init__(self):
         self.calls = []
 
+    def file_exists(self, repo_id, filename, **kw):
+        return False  # a dataset that is new, or ours (the campaign check is not reached)
+
     def create_repo(self, repo_id, **kw):
         self.calls.append(("create_repo", repo_id, kw))
 
@@ -190,6 +193,26 @@ def test_the_upload_sends_only_what_is_new_one_commit_at_a_time_and_private(ses)
     second = set([x for x in hub.calls if x[0] == "upload_folder"][-1][2]["allow_patterns"])
     assert sum(p.endswith(".parquet") for p in second) == 3 and not (second & {p for p in sent if p.endswith(".parquet")})  # only the new episodes, and the meta files
     assert "meta/episodes.jsonl" in second and read_json(c.path / "upload.json")["repo"] == "lab/blocks"
+    assert c.repo == "lab/blocks" and round_once(c, api=hub, say=lambda *_: None)["sent"] == 0  # remembered: no --repo needed
+    with pytest.raises(RuntimeError, match="one campaign, one dataset"):
+        round_once(c, "lab/other", api=hub, say=lambda *_: None)
+    other = Campaign.create(ses.campaigns_root, "Another")
+
+    class Taken(FakeHub):
+        def file_exists(self, repo_id, filename, **kw):
+            return True
+
+    import assemblyloop.record.upload as U
+
+    real = U.remote_campaign
+    U.remote_campaign = lambda api, repo: "Blocks v1"  # the dataset says it holds "Blocks v1"
+    try:
+        (other.path / "lerobot").mkdir(parents=True)
+        (other.path / "lerobot" / "x.txt").write_text("x")
+        with pytest.raises(RuntimeError, match="holds the campaign 'Blocks v1'"):
+            push(other, "lab/blocks", api=Taken(), say=lambda *_: None)
+    finally:
+        U.remote_campaign = real
 
 
 def test_the_page_makes_campaigns_and_switches_recording(ses):
