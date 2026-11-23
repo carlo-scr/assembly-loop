@@ -13,7 +13,7 @@ function say(text, good) {  // a refusal (red, until clicked) or, with `good`, a
 }
 $("msg").onclick = () => say("");
 // A task that is asked for puts the page's own switch to off first (nothing starts before the switch is clicked for it).
-const BIG = ["/api/level", "/api/find_table", "/api/move", "/api/tower", "/api/show_table", "/api/build_seen", "/api/build_design", "/api/put_held", "/api/calibrate", "/api/park"];
+const BIG = ["/api/level", "/api/find_table", "/api/move", "/api/tower", "/api/show_table", "/api/build_seen", "/api/build_design", "/api/put_held", "/api/calibrate", "/api/park", "/api/rehome"];
 async function post(path, body) {
   say(""); if (BIG.includes(path)) { halt(); big = true; }
   try {
@@ -86,7 +86,7 @@ function render(s) {
   $("ended").textContent = ph === "STOPPED" ? "The last session was stopped: " + s.ended + ". Look at the arm before starting again." : "";
   show("k_none", !s.connected);
   $("checks").replaceChildren(...(s.checks || []).map(k => chip(k.ok ? "✓" : "✗", k.ok ? "y" : "n", k.text, k.ok ? "" : k.detail)));
-  show("armbtn", !(teachOn || armed)); show("disbtn", teachOn || armed);
+  show("armbtn", !(teachOn || armed)); show("disbtn", teachOn || armed); rehome(s);
   $("armbtn").disabled = !(ph === "DISARMED" && ready); $("disbtn").disabled = !armed;
   $("c_status").textContent = c.done ? `Known: ${c.spots.map(x => x.name).join(", ")} · lift ${c.lift_mm} mm` : (teachOn ? (c.spots.length ? `${c.spots.length} saved so far: ${c.spots.map(x => x.name).join(", ")}` : "Nudge the gripper to each place below and save it.") : "Not known yet.");
   show("calbtn", c.done && !teachOn); $("calbtn").disabled = ph !== "ARMED";
@@ -157,7 +157,8 @@ function render(s) {
   tag("v_mov", a && a.moving ? "moving" : "", "live");
   tag("v_read", a && a.read_error ? "read problem: " + a.read_error : "", "bad");
   const stepName = j && busy && j.i != null ? j.steps[j.i] : "";
-  $("v_caption").textContent = stepName ? `Step ${j.i + 1} of ${j.steps.length}: ${stepName}` : "";
+  const hs = s.home && s.home.busy && s.home.i != null ? s.home : null;
+  $("v_caption").textContent = stepName ? `Step ${j.i + 1} of ${j.steps.length}: ${stepName}` : (hs ? `Rehome, step ${hs.i + 1} of ${hs.steps.length}: ${hs.steps[hs.i]}` : "");
   $("v_legend").innerHTML = s.connected && s.scene.box ? '<span><i style="background:var(--accent)"></i>where the fingertips may go</span>' + (c.spots.length ? '<span><i style="background:var(--mat)"></i>the table, from the spots</span>' : "") : "";
 
   // ---- log
@@ -166,6 +167,16 @@ function render(s) {
   $("logline").textContent = s.log.length ? s.log[s.log.length - 1] : "";
   window.HOLD = s.connected ? s.hold : null; window.PHASE = ph; window.KEYHOLD = !!s.key_hold; window.BUSY = !!c.busy;
   if (viewer) viewer.setState(s, side());
+}
+function rehome(s) {  // "Rehome" (beside Disarm): this session's own arm folded into the lab's resting pose
+  const h = s.home, b = $("homebtn"), ph = s.phase;
+  show("homebtn", !!h && h.real && (h.busy || ["AWAITING CALIBRATION", "ARMED", "RUNNING", "PAUSED"].includes(ph))); if (!h) return;
+  const now = h.busy ? (h.i != null && h.steps.length ? h.steps[h.i] : "getting ready") : "", how = s.hold === "page" ? "MOVING is on" : "the grip is held";
+  b.disabled = !h.can; b.classList.toggle("busy", h.busy);
+  b.textContent = h.busy ? (h.i != null && h.steps.length ? `Rehoming ${h.i + 1} of ${h.steps.length}` : "Rehoming …") : "Rehome";
+  b.title = (h.busy ? `Rehoming: ${now}` + (h.held ? "" : (s.hold === "page" ? ". Switch MOVING on to go on." : ". Hold the grip to go on."))
+    : (h.why ? `Rehome: ${h.why}.` : `Folds this arm into the lab's resting pose, as the lab's Rehome does: opens the gripper (a block it holds is let go where it is), comes straight up, goes to the lab's waypoint in front of the arm and folds, slowly. It moves only while ${how}. The arm stays switched on; afterwards its places must be shown again.`))
+    + (h.outcome && !h.busy ? ` Last time: ${h.outcome}.` : "");
 }
 function otherArm(s) {  // the other arm of the rig: a button in the Session rung folds it out of the way; returns a few words for that rung
   const o = s.connected ? s.other : null, b = $("o_btn"); show("o_btn", !!o); if (!o) return "";
@@ -208,7 +219,7 @@ $("spotbtn").onclick = () => post("/api/spot", {name: $("spotname").value}); $("
 $("armbtn").onclick = () => post("/api/arm", {on: true}); $("disbtn").onclick = () => post("/api/arm", {on: false});
 $("thing").onchange = () => { if ($("thing").value) post("/api/thing", {spot: $("thing").value}); };
 $("gobtn").onclick = () => post("/api/move", {dst: $("dst").value || null, count: +$("count").value, rehearse: $("rehearse").checked, step: $("step").checked});
-$("o_btn").onclick = () => post("/api/park");
+$("o_btn").onclick = () => post("/api/park"); $("homebtn").onclick = () => post("/api/rehome");
 $("nextbtn").onclick = () => post("/api/next"); $("phbtn").onclick = () => post("/api/put_held", {dst: $("ph_on").value});
 const tower = what => post("/api/tower", {on: $("tw_on").value, block_mm: +$("tw_h").value, n_now: $("tw_n").value === "" ? null : +$("tw_n").value, what: what, rounds: +$("tw_r").value, rehearse: $("rehearse").checked, step: $("step").checked});
 $("tw_build").onclick = () => tower("build"); $("tw_down").onclick = () => tower("down"); $("tw_loop").onclick = () => tower("loop");

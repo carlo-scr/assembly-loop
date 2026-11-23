@@ -162,6 +162,17 @@ One rung at a time. Stop at the first that misbehaves and keep the two log files
    If it keeps pushing, stop: put nothing down on the table until this is understood.
 9. Press STOP SESSION once on purpose. The label reads STOPPED and stays that way.
 
+## Rehome the session's own arm
+
+Once armed, **Rehome** (beside Disarm) folds the arm of the session into the lab's resting pose, the way the lab's own
+Rehome does and "Move ... arm away" below does for the other arm: opens the gripper (a block it holds is let go where
+it is), comes straight up, goes to the lab's waypoint in front of the arm, folds at 20 degrees per second. It moves
+only while the grip is held (or MOVING is on); Disarm and STOP SESSION stop it where it is. The arm stays switched on
+afterwards, and since the gripper has left the places, the label goes back to AWAITING CALIBRATION: the saved spots
+stay saved ("Use saved spots" once the gripper is back over them). Spots saved since arming but not finished with
+Done must be finished or removed first. To leave the arm folded, end the session. Not offered on the stand-in.
+**Not yet run on the real arms.**
+
 ## The other arm out of the way
 
 A session drives one arm. While it runs on one arm, the other one can be folded away so that it is not in the way:

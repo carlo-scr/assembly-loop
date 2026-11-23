@@ -13,6 +13,8 @@ Anything that moves needs BOTH the dashboard armed AND the grip held (`Gate`). A
 
 The rig has two arms. A session has ONE of them; the other one can only be folded away to the lab's resting pose
 ("Move right arm away" or left, `park.py`), with this session's hold-to-run switch, while this session's arm stands still.
+Once armed, the session's own arm can be folded to that pose too ("Rehome", the lab's button of that name); its places
+must be shown again afterwards (AWAITING CALIBRATION), since the gripper has left them.
 Each arm keeps its own taught places and its own camera fit (`per_arm`): spots.json and camera.json are the right
 arm's, spots_left.json and camera_left.json the left arm's.
 
@@ -37,7 +39,7 @@ from .cycle import NotHeld, NothingHeld, Params, execute
 from .deadman import Deadman, QuestDeadman
 from .feeds import TABLE_CAMERA, MadeUp, same_device
 from .guard import Blocked, Guard, Limits, Refused, Released
-from .park import PARK_DEG, fold_away
+from .park import PARK_DEG, carry_out, fold_away, plan, way_box
 from .record.hooks import Recording
 from .sight import NotAsPlanned, Sight
 from .spots import Spots, demo_spots, per_arm, plan_move, tool_axis
@@ -128,6 +130,7 @@ class Session(Sight, Recording):
         self.spots, self.calibrated, self.teaching, self.draft = None, False, False, None
         self.worker, self.job, self.thing_at, self.snap, self.quest_why, self.note = None, None, None, {}, None, ""
         self.stack = None  # the tower, once one was asked for: which spot, block height, how many blocks stand on it
+        self.home = None  # the last "Rehome" of this session's arm: its steps, the step under way, how it ended
         self._hz, self.log_dir = (time.monotonic(), 0, 0.0), None
         self._page = None  # the page's last report of its key: (when it came in, when the page says it sent it)
 
@@ -721,6 +724,89 @@ class Session(Sight, Recording):
             self.worker = threading.Thread(target=run, daemon=True)
             self.worker.start()
 
+    # ------------------------------------------------------------------ this arm: back to the lab's resting pose
+    def _home_why(self):
+        """Why this session's arm cannot be rehomed right now ('' if it can)."""
+        if not self.connected:
+            return "start a session first"
+        if self.arms[self.chosen].get("park") is None:
+            return "the stand-in arm has no resting pose"
+        if not self.gate.armed:
+            return "arm first"
+        if self.worker is not None:
+            return "wait until the arm has finished"
+        p = self.parking
+        if p is not None and p["busy"]:
+            return f"wait until the {p['label'].lower()} is out of the way"
+        if self.teaching and self.draft is not None and self.draft.at:
+            return "the spots saved since arming would be lost: press Done first, or remove them"
+        return ""
+
+    def rehome(self):
+        """Fold this session's own arm to the lab's resting pose, as the lab's Rehome button does (`park.py`): open the
+        gripper (a block still held is let go where it is), come straight up, go to the lab's waypoint in front of the
+        arm, fold. Through the session's guard: only while the hold-to-run switch is held, in watched pieces; every
+        point on the way is asked of the controller before anything is sent. The arm stays switched on. Its places are
+        forgotten (they stay saved): the label reads AWAITING CALIBRATION, nudging starts from the resting pose."""
+        with self.lock:
+            why = self._home_why()
+            if why:
+                raise Refused(f"rehome: {why}")
+            key, down, g = self.chosen, self.down(), self.guard
+            steps = plan(self.arm, key, down, self.P.open_counts)
+            if isinstance(steps, str):
+                self.home = dict(steps=[], i=None, busy=False, outcome="already in the lab's resting pose: nothing was sent")
+                self.say(f"rehome: {self.home['outcome']}")
+                return
+            box = way_box(self.arm.pose()[:3], steps, down, self.limit_kw)
+            self.spots, self.calibrated, self.thing_at, self.stack = None, False, None, None
+            self.teaching, self.draft, self.note = True, Spots(side=key), ""
+            g.lim = box
+            job = self.home = dict(steps=[w for _, w, _ in steps], i=None, busy=True, outcome=None)
+            sj = self.job = dict(steps=[dict(name=w) for w in job["steps"]], i=None, waiting=False, outcome=None, done=0, total=1, src=None, dst=None, rehearse=False, step=False, kind="rehome")
+
+            def run():
+                outcome = "rehomed: folded to the lab's resting pose"
+                try:
+                    carry_out(g, self.arm, steps, key, down, job, self.P.open_counts)
+                except Blocked as e:
+                    outcome = f"blocked: something is in the way ({e}); it stopped where it was"
+                    try:
+                        g.recover()
+                    except ArmFault as e2:
+                        outcome += f"; {e2}"
+                except Released as e:
+                    outcome = f"stopped: {e}"
+                except (ArmFault, Refused) as e:
+                    outcome = f"{type(e).__name__}: {e}"
+                finally:
+                    latched = g.latched
+                    with self.lock:
+                        job.update(busy=False, i=None, outcome=outcome)
+                        sj["outcome"], self.worker, self.note = outcome, None, outcome
+                        if outcome.startswith("stopped") and self.gate is not None:
+                            self.gate.armed = self.teaching = False
+                        elif not latched and self.connected and self.guard is g:
+                            try:
+                                g.lim = self._jog_limits()  # nudging starts from where it ended
+                            except Exception as e:  # noqa: BLE001  the box stays the way's; re-arming makes a new one
+                                self.say(f"rehome: could not read where it ended ({type(e).__name__}: {e})")
+                    self.say(f"rehome: {outcome}")
+                    if latched:
+                        threading.Thread(target=self.end, args=(latched,), daemon=True).start()
+
+            self.say("rehome: to the lab's resting pose: " + ", then ".join(job["steps"]) + " (it moves only while " + ("MOVING is on)" if self.hold == "page" else "the grip is held)"))
+            self.worker = threading.Thread(target=run, daemon=True)
+            self.worker.start()
+
+    def home_state(self):
+        """For the page: whether "Rehome" can be pressed, and how the last one goes or went."""
+        if not self.connected:
+            return None
+        h = self.home or {}
+        return dict(can=not self._home_why(), why=self._home_why(), busy=bool(h.get("busy")), steps=list(h.get("steps", [])), i=h.get("i"), outcome=h.get("outcome"),
+                    real=self.arms[self.chosen].get("park") is not None, held=bool(self.dm.held()))
+
     # ------------------------------------------------------------------ the other arm: out of the way
     def _other(self):
         """The arm that is NOT this session's and can be folded away (a real arm with a resting pose), or None. Only
@@ -1036,6 +1122,13 @@ class Session(Sight, Recording):
             if self.dm.held():
                 return f"The {name.lower()} is moving out of the way. " + ("The MOVING button, the space bar or Esc stop it." if page else "Let go of the grip to pause it.")
             return f"{name}: ready to move out of the way. " + ("Switch MOVING on (top bar) and watch the space between the arms." if page else "Hold the grip and watch the space between the arms.")
+        h = self.home
+        if h is not None and h["busy"]:
+            if self.dm.held():
+                return "Rehoming: the arm folds into the lab's resting pose. " + ("The MOVING button, the space bar or Esc stop it." if self.hold == "page" else "Let go of the grip to pause it.")
+            return "Rehome: ready to fold into the lab's resting pose. " + ("Switch MOVING on (top bar) and watch the arm." if self.hold == "page" else "Hold the grip and watch the arm.")
+        if h is not None and str(h.get("outcome")).startswith("rehomed") and self.teaching and (self.job or {}).get("kind") == "rehome":
+            return "Folded into the lab's resting pose; the arm is still switched on. End the session to leave it there."
         text = self._hint()
         if self.hold == "page":  # the page's own key is switched on and off, not held
             for old, new in (("Moving while the grip is held. Let go to pause.", "Moving. The MOVING button, the space bar or Esc stop it."), ("LET GO of the switch once, then hold it again.", "Click the MOVING button again."),
@@ -1067,7 +1160,7 @@ class Session(Sight, Recording):
             out = dict(phase=ph, hint=self.hint(), ended=self.ended, fake=self.fake, hold=self.hold, chosen=self.chosen, connected=self.connected, key_hold=self.key_hold,
                        arms=[dict(key=k, label=a["label"], ip=a.get("ip"), answers=None if a.get("ip") is None else self.reach.get(k),
                                   up=[-float(v) for v in a.get("down", (0.0, 0.0, -1.0))]) for k, a in self.arms.items()],
-                       scene=self.scene_state(), feeds=self.feeds is not None, other=self.other_state(),
+                       scene=self.scene_state(), feeds=self.feeds is not None, other=self.other_state(), home=self.home_state(),
                        calibration=dict(teaching=self.teaching, done=self.calibrated, spots=spots, lift_mm=None if sp is None else sp.lift, saved=self.saved(), note=self.note,
                                         busy=bool(self.teaching and self.worker is not None)),
                        thing_at=self.thing_at, log=list(self.lines)[-40:], stack=self.stack, drop_mm=self.P.drop_mm, eye=self.sight_state(),

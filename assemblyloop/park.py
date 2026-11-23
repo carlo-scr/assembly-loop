@@ -17,6 +17,9 @@ switch is held, in short pieces, each one checked; a controller error is never c
 clear it); a gripper that is tilted is first pointed straight down in place, in small watched pieces (`Guard.level`),
 so that it reaches the waypoint as the lab's arms do; and nothing is sent unless the controller says that every point
 on the way is within reach. Afterwards the arm is left stopped and the connection closed, as the lab's tools leave it.
+
+The same sequence is the dashboard's "Rehome" for the session's OWN arm (`Session.rehome`, once it is armed): the same
+steps through the session's own guard; that arm stays switched on afterwards, and its places must be shown again.
 """
 from __future__ import annotations
 
@@ -119,19 +122,43 @@ def plan(arm, side, down, open_counts=850):
     return steps
 
 
+def way_box(here, steps, down, limit_kw=None):
+    """A box around the way of `steps` (from `plan`), 30 mm to spare on every side: the guard keeps the flange in it."""
+    here = np.asarray(here, float)
+    axes = world_axes(-np.asarray(down, float))
+    c = [np.zeros(3)] + [axes.T @ (p - here) for _, _, p in steps if p is not None]
+    return Limits(here.copy(), axes, np.min(c, 0) - 30.0, np.max(c, 0) + 30.0, **(limit_kw or {}))
+
+
+def carry_out(guard, arm, steps, side, down, job, open_counts=850):
+    """Do `steps` (from `plan`) through `guard`, which is switched on and whose box holds the way (`way_box`).
+    `job["i"]` follows the step under way. Fails (ArmFault) if the arm does not end in the resting pose."""
+    for i, (kind, words, p) in enumerate(steps):
+        job["i"] = i
+        if kind == "open":
+            guard.grip(open_counts, "open the gripper before it moves")
+        elif kind == "level":
+            guard.level("point its gripper down", down=down)
+        elif kind in ("up", "via"):
+            guard.move_to(p, VIA_SPEED_MM_S, words)
+        else:
+            guard.joints_to(PARK_DEG[side], words, FOLD_SPEED_DEG_S, FOLD_ACC_DEG_S2)
+    off = float(np.max(np.abs(np.asarray(arm.joints(False), float)[:7] - np.array(PARK_DEG[side]))))
+    if off > AT_REST_DEG:
+        guard._fail(f"it ended {off:.1f} deg from the resting pose")
+
+
 def fold_away(arm, gate, side, down, job, log_path=None, say=print, limit_kw=None, guard_kw=None, open_counts=850):
     """Fold `arm` (connected; NOT the arm of the session) away to the lab's resting pose, through a guard of its own
     that moves only while `gate` is held. `job` is told the steps (`steps`, `i`) and gets the guard (`guard`), so that
     a stop button can abort it; a `cancel` already in `job` aborts it at once. Returns what happened, in words.
-    Refused: nothing was sent. Released, Blocked, ArmFault: the arm was stopped where it was."""
+    Refused: nothing was sent. Released, Blocked, ArmFault: the arm was stopped where it was.
+    (The session's OWN arm is folded the same way, through the session's guard: `Session.rehome`.)"""
     steps = plan(arm, side, down, open_counts)
     if isinstance(steps, str):
         return steps
     job["steps"] = [w for _, w, _ in steps]
-    here = np.asarray(arm.pose(), float)[:3]
-    axes = world_axes(-np.asarray(down, float))
-    c = [np.zeros(3)] + [axes.T @ (p - here) for _, _, p in steps if p is not None]  # a box around the way: the guard keeps the flange in it
-    lim = Limits(here.copy(), axes, np.min(c, 0) - 30.0, np.max(c, 0) + 30.0, **(limit_kw or {}))
+    lim = way_box(np.asarray(arm.pose(), float)[:3], steps, down, limit_kw)
     guard = Guard(arm, gate, lim, log_path=log_path, say=say, **(guard_kw or {}))
     job["guard"] = guard
     if job.get("cancel"):
@@ -139,19 +166,7 @@ def fold_away(arm, gate, side, down, job, log_path=None, say=print, limit_kw=Non
     try:
         guard._check_abort()
         guard.start()  # switches it on, as Arm does for the session's own arm: nothing moves yet
-        for i, (kind, words, p) in enumerate(steps):
-            job["i"] = i
-            if kind == "open":
-                guard.grip(open_counts, "open the gripper before it moves")
-            elif kind == "level":
-                guard.level("point its gripper down", down=down)
-            elif kind in ("up", "via"):
-                guard.move_to(p, VIA_SPEED_MM_S, words)
-            else:
-                guard.joints_to(PARK_DEG[side], words, FOLD_SPEED_DEG_S, FOLD_ACC_DEG_S2)
-        off = float(np.max(np.abs(np.asarray(arm.joints(False), float)[:7] - np.array(PARK_DEG[side]))))
-        if off > AT_REST_DEG:
-            guard._fail(f"it ended {off:.1f} deg from the resting pose")
+        carry_out(guard, arm, steps, side, down, job, open_counts)
         return DONE
     finally:
         guard.finish()

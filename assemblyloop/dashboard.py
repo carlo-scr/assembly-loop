@@ -337,6 +337,8 @@ def make_server(session, port=8777):
             session.set_lift(b.get("mm"))
         elif path == "/api/arm":
             session.arm_on() if b.get("on") else session.disarm()
+        elif path == "/api/rehome":
+            session.rehome()
         elif path == "/api/thing":
             session.set_thing(str(b.get("spot")))
         elif path == "/api/move":

@@ -98,7 +98,7 @@ label.mini input{width:64px}label.mini.col input,label.mini.col select{width:100
 .rungs li.done .b>:not(h3),.rungs li.todo .b>:not(h3){display:none}  /* only the rung that is next is spelled out */
 .rungs .a{display:flex;gap:6px}
 .tagbtn{font-size:12px;padding:3px 11px;border-radius:999px;border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--card) 80%,transparent);backdrop-filter:blur(6px)}
-#o_btn.busy:disabled{opacity:1;border-color:var(--cal);color:var(--cal)}  /* the other arm is moving: the button says how far it is */
+#o_btn.busy:disabled,#homebtn.busy:disabled{opacity:1;border-color:var(--cal);color:var(--cal)}  /* an arm is folding: the button says how far it is */
 .rungs li.done>.n{background:var(--ok);border-color:var(--ok);color:#04130b}
 .rungs li.cur{background:var(--card2)}.rungs li.cur>.n{border-color:var(--accent);color:var(--accent)}
 .rungs li.todo>.b,.rungs li.todo>.a{opacity:.45}.rungs li.todo h3 .sum{display:none}

@@ -13,8 +13,9 @@ What the real arm is asked to do, and nothing else:
     controller solves all joints anew, so the guard watches every joint while it runs (`Guard.level`).
   - pause, resume and stop such a move
   - open the gripper, or close it fully and let it stall on the brick (the lab's way of gripping)
-  - for the OTHER arm only, when asked on the page: fold it away to the lab's resting pose, all seven joints at once
-    (`move_joints`), from the lab's waypoint in front of it (`park.py`; the guard sends it in pieces of a few degrees)
+  - when asked on the page: fold an arm to the lab's resting pose, all seven joints at once (`move_joints`), from the
+    lab's waypoint in front of it (`park.py`; the guard sends it in pieces of a few degrees). The other arm ("Move
+    ... arm away") or the session's own one ("Rehome")
 It never streams targets (servo mode), never clears a controller error, never changes a controller setting (payload,
 collision sensitivity, boundaries).
 
@@ -434,7 +435,7 @@ class XArm:
 
     def move_joints(self, angles, speed, acc):
         """All seven joints to these angles [deg], in joint space, as the lab's own Rehome does (mode 0, planned). Only
-        `Guard.joints_to` asks for this, and only to fold the other arm away (`park.py`)."""
+        `Guard.joints_to` asks for this, and only to fold an arm to the lab's resting pose (`park.py`)."""
         self._ok(self.api.set_servo_angle(angle=[float(v) for v in angles[:7]], speed=float(speed), mvacc=float(acc), wait=False, is_radian=False), "set_servo_angle")
 
     def gripper_now(self):

@@ -1,5 +1,6 @@
-"""Folding the other arm out of the way (assemblyloop/park.py, Session.park_other) and each arm's own files, on
-stand-in arms in real time. The session's own arm is the left one here; the right one is folded away."""
+"""Folding the other arm out of the way (assemblyloop/park.py, Session.park_other), rehoming the session's own arm
+(Session.rehome) and each arm's own files, on stand-in arms in real time. In the tests of the other arm the session's
+own arm is the left one and the right one is folded away; in the rehome tests the session has the right one."""
 import json
 import threading
 import time
@@ -9,7 +10,7 @@ import urllib.request
 import numpy as np
 import pytest
 
-from assemblyloop.arms import FakeArm, rpy_matrix
+from assemblyloop.arms import FakeArm, rpy_matrix, run_fake_clock
 from assemblyloop.dashboard import make_server
 from assemblyloop.guard import Refused
 from assemblyloop.park import DONE, PARK_DEG, VIA_MM, levelled
@@ -286,6 +287,128 @@ def test_the_page_has_the_button_and_it_needs_the_token(rig):
         assert until(lambda: s.parking.get("guard") is not None)
         st = json.loads(urllib.request.urlopen(base + "/api/state", timeout=3).read())
         assert st["other"]["busy"] and st["other"]["label"] == "Right arm"
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+# ---------------------------------------------------------------------- "Rehome": the session's own arm
+def armed(s, arm, speed=40.0):
+    """Arm the session's own arm. It counts as a real one here, so it gets its clock from the test."""
+    run_fake_clock(arm, speed, alive=lambda: s.connected)
+    s.dm.feed(False)
+    assert until(lambda: all(c["ok"] for c in s.state()["checks"]))
+    s.arm_on()
+
+
+def test_rehome_folds_this_arm_the_labs_way_and_leaves_it_switched_on(rig):
+    s, sw, right, left = rig()
+    s.start("right", hold="page")
+    h = s.state()["home"]
+    assert h["real"] and not h["can"] and h["why"] == "arm first"
+    with pytest.raises(Refused, match="arm first"):
+        s.rehome()
+    armed(s, right)
+    assert s.state()["home"]["can"]
+    s.rehome()
+    time.sleep(0.3)
+    assert not sent(right, "grip", "move", "joints"), right.log  # nothing moves while MOVING is off
+    assert s.state()["home"]["busy"] and s.state()["hint"].startswith("Rehome: ready to fold into the lab's resting pose. Switch MOVING on")
+    with pytest.raises(Refused, match="wait until the arm has finished"):
+        s.rehome()
+    with pytest.raises(Refused, match="wait until"):
+        s.jog("up", 5)
+    sw.on()
+    assert until(lambda: not s.state()["home"]["busy"], 20), s.state()["home"]
+    h = s.state()["home"]
+    assert h["outcome"] == "rehomed: folded to the lab's resting pose", h
+    assert h["steps"] == ["open the gripper", "come straight up 200 mm", "go to the lab's waypoint in front of it", "fold it to the lab's resting pose"]
+    kinds = [e[0] for e in right.log]
+    assert kinds.index("grip") < kinds.index("move") < kinds.index("joints") and right.log[kinds.index("grip")][2] == 850  # the jaws open first
+    assert kinds.index("joints") > max(i for i, k in enumerate(kinds) if k == "move")  # folded only from the waypoint
+    folds = sent(right, "joints")
+    assert len(folds) == 10 and np.allclose(folds[-1][2], PARK_DEG["right"]) and all(f[3] == 20.0 for f in folds)
+    assert np.allclose(right.joints(False), PARK_DEG["right"]) and np.allclose(right.plan, VIA_MM)
+    assert s.phase() == "AWAITING CALIBRATION" and right.connected and right.enabled and not right.stopped  # still switched on
+    assert s.state()["hint"].startswith("Folded into the lab's resting pose")
+    assert np.allclose(s.guard.lim.origin, right.pose()[:3])  # nudging starts from where it ended
+    assert left.log == []  # the other arm was never touched
+    sw.off()
+    s.jog("up", 5)
+    sw.on()
+    assert until(lambda: s.worker is None)
+    assert s.state()["calibration"]["note"] == "" and np.isclose(right.plan[2], VIA_MM[2] + 5.0)
+    assert not s.state()["hint"].startswith("Folded")
+
+    right.q6 = np.array(PARK_DEG["right"][:6]) + 0.3
+    n = len(sent(right, "joints"))
+    s.rehome()  # every joint within 1 deg of the resting pose: nothing is sent
+    assert s.state()["home"]["outcome"] == "already in the lab's resting pose: nothing was sent" and len(sent(right, "joints")) == n and s.worker is None
+
+
+def test_rehome_from_armed_forgets_the_places_but_they_stay_saved(rig):
+    s, sw, right, left = rig()
+    s.start("right", hold="page")
+    armed(s, right)
+    s.save_spot("A")
+    with pytest.raises(Refused, match="press Done first, or remove them"):  # they would be lost
+        s.rehome()
+    right.p = right.plan = right.p + np.array([0.0, 60.0, 0.0])
+    s.save_spot("B")
+    s.calibrate_done()
+    assert s.phase() == "ARMED"
+    sw.on()
+    s.rehome()  # MOVING is switched off on the page first; here it stays on
+    assert s.phase() == "AWAITING CALIBRATION" and s.spots is None and not s.calibrated  # the gripper leaves the places
+    assert until(lambda: not s.state()["home"]["busy"], 20) and s.state()["home"]["outcome"].startswith("rehomed")
+    assert s.state()["calibration"]["saved"]["names"] == ["A", "B"]  # still on disk: "Use saved spots" once it is back over them
+    assert s.state()["calibration"]["spots"] == []
+
+
+def test_rehome_stops_where_it_is_on_disarm_and_is_not_offered_for_the_stand_in(rig):
+    s, sw, right, left = rig(fake_speed=2.0)
+    s.start("right", hold="page")
+    armed(s, right, 2.0)
+    s.rehome()
+    sw.on()
+    assert until(lambda: sent(right, "move"))
+    s.disarm()
+    assert until(lambda: not s.state()["home"]["busy"])
+    assert s.state()["home"]["outcome"] == "stopped: disarmed on the dashboard" and s.phase() == "DISARMED" and right.stopped
+    assert not sent(right, "joints")
+    s.end()
+    s.start("stand-in")
+    h = s.state()["home"]
+    assert not h["real"] and not h["can"]
+    with pytest.raises(Refused, match="the stand-in arm has no resting pose"):
+        s.rehome()
+
+
+def test_the_page_has_the_rehome_button_and_it_needs_the_token(rig):
+    s, sw, right, left = rig()
+    srv = make_server(s, 0)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+
+    def post(path, token):
+        req = urllib.request.Request(base + path, data=b"{}", method="POST", headers={"Content-Type": "application/json", "X-Token": token or ""})
+        try:
+            with urllib.request.urlopen(req, timeout=3) as r:
+                return r.status, json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read())
+
+    try:
+        page = urllib.request.urlopen(base + "/", timeout=3).read().decode()
+        assert 'id="homebtn"' in page
+        assert post("/api/rehome", "wrong")[0] == 403
+        code, body = post("/api/rehome", srv.token)
+        assert code == 409 and "start a session first" in body["error"]
+        s.start("right", hold="page")
+        armed(s, right)
+        assert post("/api/rehome", srv.token) == (200, {"ok": True})
+        st = json.loads(urllib.request.urlopen(base + "/api/state", timeout=3).read())
+        assert st["home"]["busy"] and st["home"]["steps"][0] == "open the gripper"
     finally:
         srv.shutdown()
         srv.server_close()
