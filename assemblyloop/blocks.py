@@ -128,6 +128,9 @@ class Seen:
     score: float = 1.0  # how well its outline in the picture fits (1 = exactly)
     colour: str | None = None
     name: str = ""  # a short name for the page and the log, given by `name_all`
+    crowded: bool = False  # another block touches it or is so near that the jaws coming down beside it would meet that one: push them apart first
+    margin: float = 1.0  # how far ahead this explanation of what the camera saw was of the next best one (`rival`); near 0: it may as well be that
+    rival: str = ""  # the next best explanation, in words: "red bar (flat)"
 
     @property
     def grip_mm(self):
