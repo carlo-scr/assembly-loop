@@ -183,6 +183,9 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
 #seq.expanded .rungs li.done .b > :not(h3), #seq.expanded .rungs li.todo .b > :not(h3) { display: block; }
 #seq.expanded .rungs li { align-items: start; }
 #seq.expanded .rungs li.done .sum { display: none; }
+/* Once setup advances, keep its actions in reach and let details carry the history. */
+#seq.setup-armed:not(.expanded) #r2,
+#seq.setup-complete:not(.expanded) #r5 { display: none; }
 .armlist { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 10px; }
 .armlist label { position: relative; display: flex; flex-direction: column; gap: 4px; padding: 9px 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; cursor: pointer; min-width: 0; }
 .armlist label:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }

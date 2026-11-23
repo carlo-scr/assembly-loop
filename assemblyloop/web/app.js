@@ -115,7 +115,7 @@ function runFeedback(s) {
   $("workspace_title").textContent = teaching ? "Teach places" : calibrating ? "Calibration in progress" : busy ? "Task in progress" : ready ? names[tab] : s.phase === "STOPPED" ? "Session stopped" : "Prepare your session";
   $("workspace_subtitle").textContent = teaching ? "Position the gripper, save each place, then confirm your workspace." : busy ? "Release the grip to pause. STOP SESSION ends the session." : ready ? "Choose a task, check its settings, and hold the grip to move." : "Choose an arm and complete the session checks to unlock the controls.";
   $("run_mode").textContent = calibrating ? "Calibration" : busy ? (j && j.rehearse ? "Air rehearsal" : "Physical placement") : ($("rehearse").checked ? "Air rehearsal" : "Physical placement") + " · " + ($("step").checked ? "One step at a time" : "Continuous sequence");
-  show("job_empty", !j && !busy); show("jobbox", true); show("run_progress", !!j || calibrating);
+  show("job_empty", !j && !busy); show("jobbox", !!j || busy); show("run_progress", !!j || calibrating);
   show("step_details", !!(j && j.steps && j.steps.length));
   if (!j) {
     $("run_status").textContent = calibrating ? (s.phase === "PAUSED" ? "Calibration paused" : "Calibration in progress") : "Ready for a task";
@@ -124,7 +124,7 @@ function runFeedback(s) {
     return;
   }
   const steps = j.steps || [], current = busy && j.i != null ? steps[j.i] : "";
-  $("run_status").textContent = waitingStep ? "Ready for the next step" : s.phase === "PAUSED" ? "Task paused" : busy ? "Running" : j.outcome === "done" ? "Task complete" : "Last task";
+  $("run_status").textContent = s.phase === "PAUSED" ? "Task paused" : waitingStep ? "Ready for the next step" : busy ? "Running" : j.outcome === "done" ? "Task complete" : "Last task";
   $("run_step").textContent = current ? `Step ${j.i + 1} of ${steps.length}: ${current}` : (!busy ? (j.outcome || "Task ended.") : "Waiting for task details…");
   const progress = $("run_progress"), total = Math.max(1, j.total || 1);
   progress.max = total;
@@ -157,6 +157,8 @@ function render(s) {
 
   // ---- the sequence
   const ready = (s.checks || []).length > 0 && s.checks.every(k => k.ok);
+  $("seq").classList.toggle("setup-armed", teachOn || armed);
+  $("seq").classList.toggle("setup-complete", armed);
   const rung = {"OFF": [1, 0, 0, 0, 0], "STOPPED": [1, 0, 0, 0, 0], "DISARMED": [2, ready ? 2 : 1, ready ? 1 : 0, 0, 0], "AWAITING CALIBRATION": [2, 2, 2, 1, 0]}[ph] || [2, 2, 2, 2, 1];
   rung.forEach((v, i) => { const li = $("r" + (i + 1)); li.className = ["todo", "cur", "done"][v]; li.querySelector(".n").textContent = v === 2 ? "✓" : i + 1; if (v === 1) li.setAttribute("aria-current", "step"); else li.removeAttribute("aria-current"); });
   const sums = [(s.arms.find(x => x.key === s.chosen) || {}).label || "", teachOn || armed ? "verified before arming" : ready ? "3 checks passed" : "", teachOn || armed ? "enabled" : "", c.done ? `${c.spots.map(x => x.name).join(", ")} · lift ${c.lift_mm} mm` : "", ""];

@@ -68,13 +68,33 @@ def dashboard(browser, tmp_path, request):
     assert not errors, errors
 
 
-def until(page, predicate, timeout=8):
+def until(page, predicate, timeout=8, detail=None):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if predicate():
             return
         page.wait_for_timeout(25)
-    assert predicate()
+    assert predicate(), detail() if detail else "condition did not become true"
+
+
+def hold_space(dashboard):
+    """Establish a fresh release before pressing; honor a requested release after a rendering stall."""
+    page, session = dashboard.page, dashboard.session
+    page.bring_to_front()
+
+    def details():
+        return {"deadman": session.dm.why(), "frames": session.dm.n,
+                "page": page.evaluate("({phase: window.PHASE, hold: window.HOLD, hidden: document.hidden, focused: document.activeElement?.tagName, notice: document.getElementById('held').textContent})")}
+
+    for _ in range(2):
+        frames = session.dm.n
+        page.keyboard.up("Space")
+        until(page, lambda frames=frames: session.dm.n > frames and session.dm.why() == "released", detail=details)
+        page.keyboard.down("Space")
+        until(page, lambda: session.dm.held() or session.dm.why().startswith("release the grip"), detail=details)
+        if session.dm.held():
+            return
+    assert session.dm.held(), details()
 
 
 def teaching(dashboard):
@@ -132,8 +152,7 @@ def test_keyboard_motion_hold_release_and_disarm_while_teaching(dashboard):
     page.keyboard.press("q")
     until(page, lambda: session.worker is not None)
     assert not any(action[0] == "move" for action in session.arm.log)
-    page.keyboard.down("Space")
-    until(page, lambda: session.dm.held())
+    hold_space(dashboard)
     until(page, lambda: session.worker is None)
     assert session.arm.p[2] > before[2]
     page.evaluate("window.dispatchEvent(new Event('blur'))")
@@ -187,8 +206,7 @@ def test_tower_actions_keep_every_parameter(dashboard, button, action):
 def test_lost_state_releases_hold_locks_motion_and_keeps_stop(dashboard):
     page, session = dashboard.page, dashboard.session
     ready(dashboard)
-    page.keyboard.down("Space")
-    until(page, lambda: session.dm.held())
+    hold_space(dashboard)
     page.route("**/api/state", lambda route: route.abort("failed"))
     until(page, lambda: "NO ANSWER" in page.locator("#phase").inner_text())
     until(page, lambda: not session.dm.held())
@@ -216,10 +234,11 @@ def test_queued_nudge_waits_for_fresh_state_after_command_ack(dashboard):
         jog_routes[0].continue_()
     page.wait_for_timeout(150)  # longer than the 60 ms key queue, shorter than the state timeout
     assert len(jog_routes) == 1, "a second nudge escaped before a fresh busy state"
+    assert page.evaluate("window.PHASE") == "AWAITING CALIBRATION", "the queue must wait without relying on an offline reset"
     page.unroute("**/api/state")
     page.unroute("**/api/jog")
-    for route in state_routes:
-        route.continue_()
+    # Let any in-flight request reach the dashboard's normal state timeout. It may
+    # already have been cancelled, so continuing the stored route can handle it twice.
     page.locator("#stop").click()
     page.wait_for_function("window.PHASE === 'STOPPED'")
 
